@@ -16,12 +16,13 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
         '''
         print('Loading dataset...')
         self.raw_data = py4DSTEM.import_file(file_data, binfactor=binfactor)
+        self.data = self.raw_data.data
         print('Preprocessing data...')
-        self.data = self._clean_data(self.dataset.data.reshape(-1, 1, 
-                                                               self.dataset.data.shape[-2], 
-                                                               self.dataset.data.shape[-1]))
+        self.log_data = self._clean_data(self.data.reshape(-1, 
+                                                               self.data.data.shape[-2], 
+                                                               self.data.data.shape[-1]))
         print('Done.')
-        self.shape = self.data.shape
+        self.shape = self.log_data.shape
 
     def _clean_data(self, dat):
         '''
@@ -30,10 +31,6 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
         do minmax scaling
         '''
         data = da.from_array(dat, chunks='auto')
-        
-        # print('Removing NaNs and Infs from data...')
-        # data = da.where(da.isnan(data), 0, data)
-        # data = da.where(da.isinf(data), 0, data)
         
         print('Log scaling data...')
         data = data - data.min() + 1 + 1e-10
@@ -59,3 +56,29 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx]
+
+class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
+    def __init__(self, dset, checkpoint, model, embedding=None, **kwargs):
+        '''
+        dm4 file
+        '''
+        self.checkpoint = checkpoint
+        self.model = model
+        self.model.load_weights(self.checkpoint)
+        if embedding is not None:
+            self.embedding = embedding
+        else:
+            self.embedding = self._get_embedding(dset,**kwargs)
+        self.shape = self.embedding.shape
+        
+    def _get_embedding(self, *args, **kwargs):
+        self.embedding = self.model.get_embedding(self.data,batch_size=100)
+        
+    def _save_embedding(self, path='./embedding.npy'):
+        np.save(path, self.embedding)
+        
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.embedding[idx]
