@@ -38,24 +38,15 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
         
         print('Minmax scaling data...')
         data = (data - data.min()) / (data.max() - data.min())
-        
-        # # Show progress bar
-        # with tqdm(total=data.npartitions, desc="Cleaning data") as pbar:
-        #     def update_pbar(future):
-        #         pbar.update()
-                
-        #     data = data.persist()
-        #     da.compute(data, scheduler='threads', callback=update_pbar)
-        
         print('Convert to np array...')
         data = data.compute()
         return data
         
     def __len__(self):
-        return len(self.data)
+        return len(self.log_data)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        return self.log_data[idx]
 
 class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
     def __init__(self, dset, checkpoint, model, embedding=None, **kwargs):

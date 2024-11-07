@@ -34,7 +34,7 @@ class Py4DSTEM_hv_viz():
         self.xydot_dmap = hv.DynamicMap(pn.bind(self.xy_dot, x=self.x_slider, y=self.y_slider))
         self.abdot_dmap = hv.DynamicMap(pn.bind(self.ab_dot, x=self.a_slider, y=self.b_slider))
 
-        self. 
+        # self. 
         
     def xy_dot(self, x, y): 
         return hv.Scatter([(x, y)]).opts( color='red', size=5, marker='o',

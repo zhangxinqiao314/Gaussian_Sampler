@@ -60,7 +60,7 @@ class Gaussian_Sampler(Sampler):
     def __len__(self):
         """Return the number of batches per epoch."""
         # This can be adjusted based on the desired number of iterations per epoch
-        return len(self.dset) // self.batch_size
+        return (self.shape[0]*self.shape[1]) // self.batch_size
     
 
 
