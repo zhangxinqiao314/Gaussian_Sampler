@@ -185,7 +185,6 @@ class Affine_AE_2D_module(nn.Module):
                  ): # TODO: do we eventually wnat to mask?
 
         super(Affine_AE_2D_module, self).__init__()
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         
         self.device = device
         self.affine_encoder = affine_encoder
@@ -243,7 +242,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                                     'kernel_size': 3},
                  autoencoder = Affine_AE_2D_module,
                  *args, **kwargs):
-        super(Affine_AE_2D, self).__init__(device=device,*args, **kwargs)
+        super(Affine_AE_2D, self).__init__(*args,device=device, **kwargs)
         
         self.sampler = sampler(**sampler_kwargs)
         self.collate_fn = collate_fn
