@@ -7,11 +7,11 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import py4DSTEM
 import dask.array as da        
-import aux_func
+from . import aux_func
 from tqdm import tqdm
 
 class Py4DSTEM_Dataset(torch.utils.data.Dataset):
-    def __init__(self, file_data, binfactor, block=None, center=None, **kwargs):
+    def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
         '''
         dm4 file
         '''
@@ -52,8 +52,7 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
             dataset = dataset[...,
                               self.center[0]-bound:self.center[0]+bound,
                               self.center[1]-bound:self.center[1]+bound]
-                
-        print('to dask array...')
+            
         data = da.from_array(dataset, chunks='auto')
         data = data.reshape(-1, 
                         dataset.shape[-2], 
@@ -61,18 +60,16 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
         
         if self.block>0:
             print('Blocking center beam...')
-            for i in range(dataset.shape[-1]):
-                for j in range(dataset.shape[-2]):
-                    if ( (dataset.shape[-2]//2-i)**2 + (dataset.shape[-1]//2-j)**2 ) < (self.block**2):
-                        dataset[:,:,i,j] = 0
+            for i in range(data.shape[-1]):
+                for j in range(data.shape[-2]):
+                    if ( (data.shape[-2]//2-i)**2 + (data.shape[-1]//2-j)**2 ) < (self.block**2):
+                        data[:,:,i,j] = 0
                         
         if stdv_thresh is not None:
-            thresh = data.mean() + data.std() * stdv_thresh
-            print(f'Thresholding to {thresh.compute():0.2f}/{data.max().compute():0.2f}...')
-            inds = da.argwhere(data > thresh).compute()
-            for ind in tqdm(inds):
-                data[tuple(ind)] = thresh
-                
+            print(f'Thresholding {stdv_thresh} standard deviations...')
+            thresh = data.mean(axis=(1, 2)) + data.std(axis=(1, 2)) * stdv_thresh
+            mask = data > thresh[:, None, None]
+            data = da.where(mask, thresh[:, None, None], data)
         if standard:
             print('Standard scaling data...')
             data = (data - data.mean(axis=0, keepdims=True)) / data.std(axis=0, keepdims=True)
