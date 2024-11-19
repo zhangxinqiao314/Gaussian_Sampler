@@ -9,6 +9,7 @@ import py4DSTEM
 import dask.array as da        
 from . import aux_func
 from tqdm import tqdm
+import h5py 
 
 class Py4DSTEM_Dataset(torch.utils.data.Dataset):
     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
@@ -102,23 +103,26 @@ class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
         '''
         dm4 file
         '''
+        self.dset = dset
         self.checkpoint = checkpoint
         self.model = model
         self.model.load_weights(self.checkpoint)
-        if embedding is not None:
-            self.embedding = embedding
-        else:
-            self.embedding = self._get_embedding(dset,**kwargs)
-        self.shape = self.embedding.shape
+        # self._get_embedding(dset,**kwargs)
+
+        self.emb_h5_path = self.model.emb_h5_path
+        self.check = self.model.check
         
-    def _get_embedding(self, *args, **kwargs):
-        self.embedding = self.model.get_embedding(self.data,batch_size=100)
-        
-    def _save_embedding(self, path='./embedding.npy'):
-        np.save(path, self.embedding)
+    # def _get_embedding(self, *args, **kwargs):
+    #     self.embedding = self.model.get_embedding(self.data,batch_size=100)
         
     def __len__(self):
-        return len(self.data)
+        return len(self.dset)
 
     def __getitem__(self, idx):
-        return self.embedding[idx]
+        with h5py.File(self.emb_h5_path) as h:
+            emb = h[f'embedding_{self.check}'][idx]
+            scale = h[f'scale_{self.check}'][idx]
+            shear = h[f'shear_{self.check}'][idx]
+            rotation = h[f'rotation_{self.check}'][idx]
+            translation = h[f'translation_{self.check}'][idx]
+        return emb, scale, shear, rotation, translation

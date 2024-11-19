@@ -8,10 +8,58 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from m3_learning.util.file_IO import make_folder
-
+import torch.optim as optim
+import h5py
+from torch.autograd import Variable
 from datetime import datetime
+import os
 
-def affine_transform(x, scale, shear, rotation, translation, mask_parameter):
+
+def apply_affine_transform(x, scale, shear, rotation, translation, mask_parameter):
+    """
+    Function to apply affine transformation to the input tensor x
+
+    Args:
+    x (torch.Tensor): input tensor
+    scale (torch.Tensor): scale transformation
+    shear (torch.Tensor): shear transformation
+    rotation (torch.Tensor): rotation transformation
+    translation (torch.Tensor): translation transformation
+    mask_parameter (torch.Tensor): mask parameter
+
+    Returns:
+    torch.Tensor: transformed tensor
+    """
+    # get the shape of the input tensor
+    
+    # get the grid
+    # grid = F.affine_grid(torch.eye(2, 3, device=device).unsqueeze(0).repeat(x.shape[0], 1, 1), x.size(), align_corners=False)
+
+    if translation is not None:
+        grid = F.affine_grid(translation, x.size(), align_corners=False)
+        x = F.grid_sample(x, grid, align_corners=False)
+        
+    if rotation is not None:
+        grid = F.affine_grid(rotation, x.size(), align_corners=False)
+        x = F.grid_sample(x, grid, align_corners=False)
+        
+    # apply the transformations
+    if scale is not None:
+        grid = F.affine_grid(scale, x.size(), align_corners=False)
+        x = F.grid_sample(x, grid, align_corners=False)
+
+    if shear is not None:
+        grid = F.affine_grid(shear, x.size(), align_corners=False)
+        x = F.grid_sample(x, grid, align_corners=False)
+
+
+    if mask_parameter is not None:
+        x = x * mask_parameter
+
+    return x
+
+
+def apply_inv_affine_transform(x, scale, shear, rotation, translation, mask_parameter):
     """
     Function to apply affine transformation to the input tensor x
 
@@ -30,24 +78,40 @@ def affine_transform(x, scale, shear, rotation, translation, mask_parameter):
     shape = x.shape
     device = x.device
     
+    # compute inverse affine matrix 
+    identity = ( torch.tensor([0, 0, 1], dtype=torch.float).reshape(1, 1, 3)\
+                .repeat(shape[0], 1, 1).to(device) )
+    
     # get the grid
-    grid = F.affine_grid(torch.eye(2, 3, device=device).unsqueeze(0).repeat(x.shape[0], 1, 1), x.size(), align_corners=False)
+    # grid = F.affine_grid(torch.eye(2, 3, device=device).unsqueeze(0).repeat(x.shape[0], 1, 1), x.size(), align_corners=False)
 
-    if rotation is not None:
-        grid = F.affine_grid(rotation, x.size(), align_corners=False)
+    # apply the transformations
+    if shear is not None:
+        inver_shear = torch.linalg.inv( 
+                        torch.cat((shear, identity), axis=1).to(device)
+                    )[:, 0:2].to(device)
+        grid = F.affine_grid(inver_shear, x.size(), align_corners=False)
         x = F.grid_sample(x, grid, align_corners=False)
         
-    # apply the transformations
     if scale is not None:
-        grid = F.affine_grid(scale, x.size(), align_corners=False)
+        inver_scale = torch.linalg.inv( 
+                         torch.cat((scale, identity), axis=1).to(device)
+                                        )[:, 0:2].to(device)
+        grid = F.affine_grid(inver_scale, x.size(), align_corners=False)
         x = F.grid_sample(x, grid, align_corners=False)
 
-    if shear is not None:
-        grid = F.affine_grid(shear, x.size(), align_corners=False)
+    if rotation is not None:
+        inver_rotation = torch.linalg.inv( 
+                            torch.cat((translation, identity), axis=1).to(device)
+                      )[:, 0:2].to(device)
+        grid = F.affine_grid(inver_rotation, x.size(), align_corners=False)
         x = F.grid_sample(x, grid, align_corners=False)
-
+        
     if translation is not None:
-        grid = F.affine_grid(translation, x.size(), align_corners=False)
+        inver_translation = torch.linalg.inv( 
+                            torch.cat((translation, identity), axis=1).to(device)
+                        )[:, 0:2].to(device)
+        grid = F.affine_grid(inver_translation, x.size(), align_corners=False)
         x = F.grid_sample(x, grid, align_corners=False)
 
     if mask_parameter is not None:
@@ -140,7 +204,7 @@ class Affine_Transform(nn.Module):
         a_4 = torch.ones([out.shape[0]]).to(self.device)
         a_5 = torch.zeros([out.shape[0]]).to(self.device)
         
-        if self.rotate is not None:
+        if self.rotation is not None:
             a_1 = torch.cos(rotate)
             a_2 = torch.sin(rotate)
             b1 = torch.stack((a_1,a_2), dim=1).squeeze()
@@ -193,15 +257,18 @@ class Affine_AE_2D_module(nn.Module):
         self.decoder = decoder        
 
     def forward(self, x):
+        if x.dim() < 4: x = x.unsqueeze(1)
         emb_affine = self.affine_encoder(x)
-        scale, shear, rotation, translation, mask_parameter = self.affine_model(emb_affine)
-        x = affine_transform(x, scale, shear, rotation, translation, mask_parameter)
+        scale, shear, rotation, translation, mask_parameter = self.affine_module(emb_affine)
+        x = apply_affine_transform(x, scale, shear, rotation, translation, mask_parameter)
         
         emb = self.encoder(x)
-        x = self.decoder(x)
+        x = self.decoder(emb)
+        if x.dim() < 4: x = x.unsqueeze(1)
+        x = apply_inv_affine_transform(x, scale, shear, rotation, translation, mask_parameter)
         
         # TODO: make everything into **kwargs later
-        return x, emb, scale, shear, rotation, translation, mask_parameter
+        return x, emb, translation, rotation, scale, shear, mask_parameter
 
 
 class Affine_AE_2D(STEM_AE.ConvAutoencoder):
@@ -251,26 +318,41 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
         
         for key, value in affine_encoder_kwargs.items():
             setattr(self, 'affine_encoder_'+key, value)
-        self.affine_encoder = affine_encoder(**affine_encoder_kwargs)
+        self.affine_encoder = affine_encoder(**affine_encoder_kwargs).to(self.device)
         
         affine_kwargs['device'] = device
         for key, value in affine_kwargs.items():
             setattr(self, 'affine_block_'+key, value)
-        self.affine_module = affine_module(**affine_kwargs)
+        self.affine_module = affine_module(**affine_kwargs).to(self.device)
         
         for key, value in encoder_kwargs.items():
             setattr(self, 'encoder_'+key, value)
-        self.encoder = encoder(**encoder_kwargs)
+        self.encoder = encoder(**encoder_kwargs).to(self.device)
         
         for key, value in decoder_kwargs.items():
             setattr(self, 'decoder_'+key, value)
-        self.decoder = decoder(**decoder_kwargs)
+        self.decoder = decoder(**decoder_kwargs).to(self.device)
         
         self.autoencoder = autoencoder(device = device,
                                        affine_encoder = self.affine_encoder,
                                        affine_module = self.affine_module,
                                        encoder = self.encoder,
-                                       decoder = self.decoder)
+                                       decoder = self.decoder).to(self.device)
+        
+        # sets the optimizers
+        self.optimizer = optim.Adam(
+            self.autoencoder.parameters(), lr=self.learning_rate
+        )
+        
+    @property
+    def checkpoint(self):
+        return self.checkpoint_
+    @checkpoint.setter
+    def checkpoint(self, value):
+        self.checkpoint_ = value
+        self.folder_path, filename = os.path.split(self.checkpoint)
+        self.emb_h5_path = self.folder_path+'/_embedding.h5'
+        self.check = filename[:-4]
         
     def Train(self,
               data,
@@ -285,8 +367,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
               epoch_=None,
               folder_path='./',
               batch_size=32,
-              best_train_loss=None,
-              dataloader_init = None):
+              best_train_loss=None):
         """function that trains the model
 
         Args:
@@ -311,11 +392,9 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
         torch.manual_seed(seed)
         
         # builds the dataloader
-        if dataloader_init is None:  
-            self.DataLoader_ = DataLoader(data.reshape(-1, data.shape[-2], data.shape[-1]),
-                                          batch_size=batch_size, 
-                                          shuffle=True)
-        else: self.DataLoader_ = DataLoader(data, **dataloader_init)
+        self.DataLoader_ = DataLoader(data.reshape(-1, data.shape[-2], data.shape[-1]),
+                                      sampler=self.sampler,
+                                      collate_fn=self.collate_fn)
 
         # option to use the learning rate scheduler
         if with_scheduler:
@@ -364,6 +443,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                     f'trainloss:{train_loss:.4f}.pkl'
         
         torch.save(checkpoint, file_path)
+        self.checkpoint = file_path
                     
     def loss_function(self,
                       train_iterator,
@@ -403,12 +483,13 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
             # update the gradients to zero
             self.optimizer.zero_grad()
 
-            embedding = self.encoder(x)
-            reg_loss_1 = coef * torch.norm(embedding, ln_parm).to(self.device)/x.shape[0]
-            if reg_loss_1 == 0: reg_loss_1 = 0.5
-            predicted_x = self.decoder(embedding)
-            contras_loss = con_l(embedding)
-            maxi_loss = maxi_(embedding)
+            predicted_x, embedding, translation, rotation, scale, shear, mask_parameter = self.autoencoder(x)
+            if coef>0: reg_loss_1 = coef * torch.norm(embedding, ln_parm).to(self.device)/x.shape[0]
+            else: reg_loss_1 = 0
+            if coef1>0: contras_loss = con_l(embedding)
+            else: contras_loss = 0
+            if coef2>0: maxi_loss = maxi_(embedding)
+            else: maxi_loss = 0
             
             # i, idx, x are lists. Each list is the gaussian samples from a batch
             if binning:
@@ -449,6 +530,169 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
 
         return train_loss
                                             
+    def get_embeddings(self, data, batch_size=32, train=False, check=None):
+        # builds the dataloader
+        dataloader = DataLoader(data,batch_size, shuffle=False)
+
+        try:
+            try: h = h5py.File(self.emb_h5_path,'r+')
+            except: 
+                h = h5py.File(self.emb_h5_path,'w')
+                print(f'creating {self.emb_h5_path} file')
+
+            if check==None: check = self.checkpoint.split('/')[-1][:-4]
+            try: 
+                embedding_ = h[f'embedding_{check}']
+                scale_ = h[f'scale_{check}']
+                shear_ = h[f'shear_{check}']
+                rotation_ = h[f'rotation_{check}']                    
+                translation_ = h[f'translation_{check}']
+            except:
+                embedding_ = h.create_dataset(f'embedding_{check}', data = np.zeros([data.shape[0], self.embedding_size]))
+                scale_shear_ = h.create_dataset(f'scale_{check}', data = np.zeros([data.shape[0],6]))
+                scale_shear_ = h.create_dataset(f'shear_{check}', data = np.zeros([data.shape[0],6]))
+                rotation_ = h.create_dataset(f'rotation_{check}', data = np.zeros([data.shape[0],6]))
+                translation_ = h.create_dataset(f'translation_{check}', data = np.zeros([data.shape[0],6]))
+                print('creating new embedding and affine h5 datasets')
+
+        except Exception as error:
+            print(error) 
+            assert self.train,"No h5_dataset embedding dataset created"
+            print('Warning: not saving to h5')
+             
+        h.close()
+                
+        if train: 
+            print('Created empty h5 embedding datasets to fill during training')
+            return 1 # do not calculate. 
+            # return true to indicate this is filled during training
+
+        else:
+            for i, x in enumerate(tqdm(dataloader, leave=True, total=len(dataloader))):
+                with torch.no_grad():
+                    with h5py.File(self.emb_h5_path,'r+') as h:       
+                        value = x
+                        test_value = Variable(value.to(self.device))
+                        test_value = test_value.float()
+                        ( predicted_x, 
+                          embedding, 
+                          translation, 
+                          rotation, 
+                          scale, 
+                          shear, 
+                          mask_parameter ) = self.autoencoder(test_value)                      
+                        h[f'embedding_{check}'][i*batch_size:(i+1)*batch_size, :] = embedding.cpu().detach().numpy()
+                        h[f'scale_{check}'][i*batch_size:(i+1)*batch_size, :] = scale.reshape(-1,6).cpu().detach().numpy()
+                        h[f'shear_{check}'][i*batch_size:(i+1)*batch_size, :] = shear.reshape(-1,6).cpu().detach().numpy()
+                        h[f'rotation_{check}'][i*batch_size:(i+1)*batch_size, :] = rotation.reshape(-1,6).cpu().detach().numpy()
+                        h[f'translation_{check}'][i*batch_size:(i+1)*batch_size, :] = translation.reshape(-1,6).cpu().detach().numpy()
+
+    def generate_by_range(self,checkpoint,
+                         ranges=None,
+                         generator_iters=50,
+                         averaging_number=100,
+                         overwrite=False,
+                         with_affine=False,
+                         train=True,
+                         **kwargs
+                         ):
+        """Generates images as the variables traverse the latent space.
+        Saves to embedding h5 dataset
+
+        Args:
+            embedding (tensor, optional): embedding to predict with. Defaults to None.
+            folder_name (str, optional): name of folder where images are saved. Defaults to ''.
+            ranges (list, optional): sets the range to generate images over. Defaults to None.
+            generator_iters (int, optional): number of iterations to use in generation. Defaults to 200.
+            averaging_number (int, optional): number of embeddings to average. Defaults to 100.
+            graph_layout (list, optional): layout parameters of the graph (#graphs,#perrow). Defaults to [2, 2].
+            shape_ (list, optional): initial shape of the image. Defaults to [256, 256, 256, 256].
+        """
+
+        assert not self.train, 'set self.train to False if calculating manually'
+        # sets the kwarg values
+        for key, value in kwargs.items():
+            exec(f'{key} = value')
+
+        channels = np.arange(self.embedding_size)
+        # sets the channels to use in the object
+        if "channels" in kwargs: channels = kwargs["channels"]
+        if "ranges" in kwargs: ranges = kwargs["ranges"]
+
+        # gets the embedding if a specific embedding is not provided
+        try:
+            embedding = self.embedding
+        except Exception as error:
+            print(error)
+            assert False, 'Make sure model is set to appropriate embeddings first'
+
+        try: # try opening h5 file
+            try: # make new file
+                h = h5py.File(self.gen_h5_path,'w')
+            except: # open existing file
+                h = h5py.File(self.gen_h5_path,'r+')
+
+            check = checkpoint.split('/')[-1][:-4]
+            try: # make new dataset
+                if overwrite and check in h: del h[check]
+                self.generated = h.create_dataset(check,
+                                            data=np.zeros( [len(meta['particle_list']),
+                                                            generator_iters,
+                                                            len(channels),
+                                                            128,128] ) )
+                self.generated.attrs['clustered']=False    
+
+            except: # open existing dataset for checkpoint
+                self.generated = h[check]
+                
+        except Exception as error: # cannot open h5
+            print(error)
+            assert False,"No h5_dataset generated dataset created"
+
+        for p,p_name in enumerate(meta['particle_list']): # each sample
+            print(p, p_name)
+            # shape 128*128, 32
+            data=self.embedding[meta['particle_inds'][p]:\
+                                meta['particle_inds'][p+1]]
+                
+            # loops around the number of iterations to generate
+            for i in tqdm(range(generator_iters)):
+
+                # loops around all of the embeddings
+                for j, channel in enumerate(channels):
+
+                    if ranges is None: # span this range when generating
+                        ranges = np.stack((np.min(data, axis=0),
+                                        np.max(data, axis=0)), axis=1)
+
+                    # linear space values for the embeddings
+                    value = np.linspace(ranges[j][0], ranges[j][1],
+                                        generator_iters)
+
+                    # finds the nearest points to the value and then takes the average
+                    # average number of points based on the averaging number
+                    # len: averaging number
+                    idx = find_nearest(
+                        data[:,channel],
+                        value[i],
+                        averaging_number)
+
+                    # computes the mean of the selected index to yield (embsize) length verctor
+                    # shape 32
+                    gen_value = np.mean(data[idx], axis=0)
+
+                    # specifically updates the value of the mean embedding image to visualize 
+                    # based on the linear spaced vector
+                    # shape
+                    gen_value[channel] = value[i]
+
+                    # generates diffraction pattern
+                    self.generated[meta['particle_inds'][p]: meta['particle_inds'][p+1],i,j] =\
+                        self.generate_spectra(gen_value).squeeze()       
+        h.close()
+
+        # return self.generated
+
 
 
 class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
@@ -623,7 +867,7 @@ class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
                     # print('')
 
             # reconstruction loss
-            loss = F.mse_loss(x, predicted_x, reduction='mean')
+            loss = F.mse_loss(x.squeeze(), predicted_x.squeeze(), reduction='mean')
             
             loss = loss + reg_loss_1 + contras_loss - maxi_loss
 
