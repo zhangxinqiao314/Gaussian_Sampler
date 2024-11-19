@@ -13,6 +13,7 @@ import h5py
 from torch.autograd import Variable
 from datetime import datetime
 import os
+from m3_learning.viz.layout import find_nearest
 
 
 def apply_affine_transform(x, scale, shear, rotation, translation, mask_parameter):
@@ -256,16 +257,21 @@ class Affine_AE_2D_module(nn.Module):
         self.encoder = encoder
         self.decoder = decoder        
 
-    def forward(self, x):
+    def _encoder(self, x):
         if x.dim() < 4: x = x.unsqueeze(1)
         emb_affine = self.affine_encoder(x)
         scale, shear, rotation, translation, mask_parameter = self.affine_module(emb_affine)
         x = apply_affine_transform(x, scale, shear, rotation, translation, mask_parameter)
+        return self.encoder(x), scale, shear, rotation, translation, mask_parameter
         
-        emb = self.encoder(x)
+    def _decoder(self, emb, scale, shear, rotation, translation, mask_parameter):
         x = self.decoder(emb)
         if x.dim() < 4: x = x.unsqueeze(1)
-        x = apply_inv_affine_transform(x, scale, shear, rotation, translation, mask_parameter)
+        return apply_inv_affine_transform(x, scale, shear, rotation, translation, mask_parameter)
+        
+    def forward(self, x):
+        emb, scale, shear, rotation, translation, mask_parameter = self._encoder(x)
+        x = self._decoder(emb, scale, shear, rotation, translation, mask_parameter)
         
         # TODO: make everything into **kwargs later
         return x, emb, translation, rotation, scale, shear, mask_parameter
@@ -352,6 +358,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
         self.checkpoint_ = value
         self.folder_path, filename = os.path.split(self.checkpoint)
         self.emb_h5_path = self.folder_path+'/_embedding.h5'
+        self.gen_h5_path = self.folder_path+'/_generated.h5'
         self.check = filename[:-4]
         
     def Train(self,
@@ -587,14 +594,13 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                         h[f'rotation_{check}'][i*batch_size:(i+1)*batch_size, :] = rotation.reshape(-1,6).cpu().detach().numpy()
                         h[f'translation_{check}'][i*batch_size:(i+1)*batch_size, :] = translation.reshape(-1,6).cpu().detach().numpy()
 
-    def generate_by_range(self,checkpoint,
-                         ranges=None,
+    def generate_by_range(self,
+                          orig_shape,
                          generator_iters=50,
-                         averaging_number=100,
+                         averaging_number=50,
                          overwrite=False,
-                         with_affine=False,
-                         train=True,
-                         **kwargs
+                         ranges=None,
+                         channels=None
                          ):
         """Generates images as the variables traverse the latent space.
         Saves to embedding h5 dataset
@@ -608,90 +614,91 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
             graph_layout (list, optional): layout parameters of the graph (#graphs,#perrow). Defaults to [2, 2].
             shape_ (list, optional): initial shape of the image. Defaults to [256, 256, 256, 256].
         """
+        if channels is None: channels = range(self.embedding_size)
 
-        assert not self.train, 'set self.train to False if calculating manually'
-        # sets the kwarg values
-        for key, value in kwargs.items():
-            exec(f'{key} = value')
-
-        channels = np.arange(self.embedding_size)
-        # sets the channels to use in the object
-        if "channels" in kwargs: channels = kwargs["channels"]
-        if "ranges" in kwargs: ranges = kwargs["ranges"]
-
-        # gets the embedding if a specific embedding is not provided
-        try:
-            embedding = self.embedding
-        except Exception as error:
-            print(error)
-            assert False, 'Make sure model is set to appropriate embeddings first'
+        # # gets the embedding
+        # try:
+        #     with h5py.File(self.emb_h5_path,'r+') as he:
+        #         data = he[f'embedding_{self.check}']
+        #         scale = he[f'scale_{self.check}']
+        #         shear = he[f'shear_{self.check}']
+        #         rotation = he[f'rotation_{self.check}']
+        #         translation = he[f'translation_{self.check}']
+        # except Exception as error:
+        #     print(error)
+        #     assert False,"No h5_dataset embedding dataset created"
 
         try: # try opening h5 file
             try: # make new file
-                h = h5py.File(self.gen_h5_path,'w')
+                hg = h5py.File(self.gen_h5_path,'w')
             except: # open existing file
-                h = h5py.File(self.gen_h5_path,'r+')
+                hg = h5py.File(self.gen_h5_path,'r+')
 
-            check = checkpoint.split('/')[-1][:-4]
             try: # make new dataset
-                if overwrite and check in h: del h[check]
-                self.generated = h.create_dataset(check,
-                                            data=np.zeros( [len(meta['particle_list']),
-                                                            generator_iters,
-                                                            len(channels),
-                                                            128,128] ) )
-                self.generated.attrs['clustered']=False    
-
+                if overwrite and self.check in hg: del hg[self.check]
+                generated = hg.create_dataset(self.check,
+                                              shape=(orig_shape[0]*orig_shape[1],
+                                                    generator_iters,
+                                                    len(channels),
+                                                    orig_shape[2], orig_shape[3]) )
             except: # open existing dataset for checkpoint
-                self.generated = h[check]
+                self.generated = hg[self.check]
                 
         except Exception as error: # cannot open h5
             print(error)
             assert False,"No h5_dataset generated dataset created"
 
-        for p,p_name in enumerate(meta['particle_list']): # each sample
-            print(p, p_name)
-            # shape 128*128, 32
-            data=self.embedding[meta['particle_inds'][p]:\
-                                meta['particle_inds'][p+1]]
-                
-            # loops around the number of iterations to generate
-            for i in tqdm(range(generator_iters)):
+        with h5py.File(self.gen_h5_path,'r+') as hg:
+            with h5py.File(self.emb_h5_path,'r+') as he:
+                data = he[f'embedding_{self.check}']
+                scale = he[f'scale_{self.check}']
+                shear = he[f'shear_{self.check}']
+                rotation = he[f'rotation_{self.check}']
+                translation = he[f'translation_{self.check}']
+                generated = hg[self.check]
+                # loops around the number of iterations to generate
+                for i in tqdm(range(generator_iters)):
+                    # loops around all of the embeddings
+                    for j, channel in enumerate(channels):
 
-                # loops around all of the embeddings
-                for j, channel in enumerate(channels):
+                        if ranges is None: 
+                            ranges = np.stack((np.min(data, axis=0),
+                                            np.max(data, axis=0)), axis=1)
 
-                    if ranges is None: # span this range when generating
-                        ranges = np.stack((np.min(data, axis=0),
-                                        np.max(data, axis=0)), axis=1)
-
-                    # linear space values for the embeddings
-                    value = np.linspace(ranges[j][0], ranges[j][1],
-                                        generator_iters)
-
-                    # finds the nearest points to the value and then takes the average
-                    # average number of points based on the averaging number
-                    # len: averaging number
-                    idx = find_nearest(
-                        data[:,channel],
-                        value[i],
-                        averaging_number)
-
-                    # computes the mean of the selected index to yield (embsize) length verctor
-                    # shape 32
-                    gen_value = np.mean(data[idx], axis=0)
-
-                    # specifically updates the value of the mean embedding image to visualize 
-                    # based on the linear spaced vector
-                    # shape
-                    gen_value[channel] = value[i]
-
-                    # generates diffraction pattern
-                    self.generated[meta['particle_inds'][p]: meta['particle_inds'][p+1],i,j] =\
-                        self.generate_spectra(gen_value).squeeze()       
-        h.close()
-
-        # return self.generated
+                        # linear space values for the embeddings
+                        value = np.linspace(ranges[j][0], ranges[j][1],
+                                            generator_iters)
+                        dec_kwargs = self.decoder_kwargs(ref_value=value[i], 
+                                            emb=data[:,channel], 
+                                            scale=scale, 
+                                            shear=shear, 
+                                            rotation=rotation, 
+                                            translation=translation)
+                        # generates diffraction pattern
+                        generated[:,i,j] =\
+                            self.generate_spectra(**dec_kwargs).squeeze()       
+    
+    def decoder_kwargs(self,channel,ref_value,data,averaging_number,**kwargs):
+        idx = find_nearest(data[channel], ref_value, averaging_number)
+        # finds the idx of nearest `averaging_number` of points to the value
+        # TODO: try this with all embeddings at 0, except the current is the value[i]
+        # computes the mean of the selected indices to yield (embsize) length vector
+        gen_value = data[idx].mean(axis=0)
+        gen_value[channel] = ref_value
+        
+        for key, value in kwargs.items():
+            kwargs[key] = value[idx].mean(axis=0)
+        kwargs['x'] = gen_value
+        
+        return kwargs
+        
+    def generate_spectra(self, x, **kwargs):
+        x = torch.from_numpy(np.atleast_2d(x)).to(self.device)
+        for key, value in kwargs.items():
+            kwargs[key] = torch.from_numpy(np.atleast_2d(value)).to(self.device)
+        x = self.autoencoder._decoder(x.float(), **kwargs)
+        x = x.cpu().detach().numpy()
+        return x
 
 
 
