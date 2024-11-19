@@ -651,10 +651,17 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
         with h5py.File(self.gen_h5_path,'r+') as hg:
             with h5py.File(self.emb_h5_path,'r+') as he:
                 data = he[f'embedding_{self.check}']
-                scale = he[f'scale_{self.check}']
-                shear = he[f'shear_{self.check}']
-                rotation = he[f'rotation_{self.check}']
-                translation = he[f'translation_{self.check}']
+                try: scale = he[f'scale_{self.check}']
+                except: scale = None
+                try: shear = he[f'shear_{self.check}']
+                except: shear = None
+                try: rotation = he[f'rotation_{self.check}']
+                except: rotation = None
+                try: translation = he[f'translation_{self.check}']
+                except: translation = None
+                try: mask_parameter = he[f'mask_parameter_{self.check}']
+                except: mask_parameter = None
+                
                 generated = hg[self.check]
                 # loops around the number of iterations to generate
                 for i in tqdm(range(generator_iters)):
@@ -668,18 +675,23 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                         # linear space values for the embeddings
                         value = np.linspace(ranges[j][0], ranges[j][1],
                                             generator_iters)
-                        dec_kwargs = self.decoder_kwargs(ref_value=value[i], 
-                                            emb=data[:,channel], 
+                        dec_kwargs = self.decoder_kwargs(
+                                            channel=channel,
+                                            ref_value=value[i], 
+                                            averaging_number=averaging_number,
+                                            data=data[:], 
                                             scale=scale, 
                                             shear=shear, 
                                             rotation=rotation, 
-                                            translation=translation)
+                                            translation=translation,
+                                            mask_parameter=mask_parameter)
                         # generates diffraction pattern
                         generated[:,i,j] =\
-                            self.generate_spectra(**dec_kwargs).squeeze()       
+                            self.generate_spectra(**dec_kwargs).squeeze().cpu().detach().numpy()       
     
     def decoder_kwargs(self,channel,ref_value,data,averaging_number,**kwargs):
         idx = find_nearest(data[channel], ref_value, averaging_number)
+        idx.sort()
         # finds the idx of nearest `averaging_number` of points to the value
         # TODO: try this with all embeddings at 0, except the current is the value[i]
         # computes the mean of the selected indices to yield (embsize) length vector
@@ -687,7 +699,8 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
         gen_value[channel] = ref_value
         
         for key, value in kwargs.items():
-            kwargs[key] = value[idx].mean(axis=0)
+            try: kwargs[key] = value[idx].mean(axis=0)
+            except: pass
         kwargs['x'] = gen_value
         
         return kwargs
@@ -695,10 +708,9 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
     def generate_spectra(self, x, **kwargs):
         x = torch.from_numpy(np.atleast_2d(x)).to(self.device)
         for key, value in kwargs.items():
-            kwargs[key] = torch.from_numpy(np.atleast_2d(value)).to(self.device)
-        x = self.autoencoder._decoder(x.float(), **kwargs)
-        x = x.cpu().detach().numpy()
-        return x
+            try: kwargs[key] = torch.from_numpy(value.reshape(1,2,3)).float().to(self.device)
+            except: pass
+        return self.autoencoder._decoder(x.float(), **kwargs)
 
 
 
