@@ -317,7 +317,10 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                  *args, **kwargs):
         super(Affine_AE_2D, self).__init__(*args,device=device, **kwargs)
         
-        self.sampler = sampler(**sampler_kwargs)
+        if sampler==None: 
+            self.sampler = None
+        else:
+            self.sampler = sampler(**sampler_kwargs)
         self.collate_fn = collate_fn
         
         self.device = device
@@ -374,7 +377,9 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
               epoch_=None,
               folder_path='./',
               batch_size=32,
-              best_train_loss=None):
+              best_train_loss=None,
+              binning=False,
+              **kwargs):
         """function that trains the model
 
         Args:
@@ -401,7 +406,8 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
         # builds the dataloader
         self.DataLoader_ = DataLoader(data.reshape(-1, data.shape[-2], data.shape[-1]),
                                       sampler=self.sampler,
-                                      collate_fn=self.collate_fn)
+                                      collate_fn=self.collate_fn,
+                                      batch_size=batch_size,)
 
         # option to use the learning rate scheduler
         if with_scheduler:
@@ -425,7 +431,8 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                                        coef_1, 
                                        coef_2, 
                                        coef_3, 
-                                       ln_parm)
+                                       ln_parm,
+                                       binning=binning)
             train_loss = train
             train_loss /= len(self.DataLoader_)
             print( f'Epoch: {epoch:03d}/{epochs:03d} | Train Loss: {train_loss:.4f}')
@@ -486,7 +493,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
             x = x.to(self.device, dtype=torch.float)
             maxi_ = DivergenceLoss(x.shape[0], coef2).to(self.device)
             
-            
+            sh = x.shape
             # update the gradients to zero
             self.optimizer.zero_grad()
 
@@ -525,7 +532,9 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                     # print('')
 
             # reconstruction loss
-            loss = F.mse_loss(x, predicted_x, reduction='mean')
+            loss = F.mse_loss(x.reshape(sh[0],-1,sh[-2],sh[-1]), 
+                              predicted_x.reshape(sh[0],-1,sh[-2],sh[-1]), 
+                              reduction='mean')
             
             loss = loss + reg_loss_1 + contras_loss - maxi_loss
 
@@ -637,8 +646,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
             try: # make new dataset
                 if overwrite and self.check in hg: del hg[self.check]
                 generated = hg.create_dataset(self.check,
-                                              shape=(orig_shape[0]*orig_shape[1],
-                                                    generator_iters,
+                                              shape=(generator_iters,
                                                     len(channels),
                                                     orig_shape[2], orig_shape[3]) )
             except: # open existing dataset for checkpoint
