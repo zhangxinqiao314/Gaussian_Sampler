@@ -45,28 +45,30 @@ from holoviews.streams import Tap
 hv.extension('bokeh')  # or 'matplotlib' if you prefer
 
 class Viz_affine_AE_hv():
-    def __init__(self,dset,model,embedding,channel_type='all',active_threshold=0.1):
+    def __init__(self,dset,model,embedding,generated,channel_type='all',active_threshold=0.1):
         '''
         '''
         self.dset = dset
         self.model = model
         self.embedding = embedding
+        self.generated = generated
+        self.shape = dset.meta['shape_list']
+        
         self.active_threshold = active_threshold
         
         self.affine_labels = [ 'x scaling', 'y scaling', 'x translation', 'y translation', 'rotation', 'shear']
-
+        
         self.channels = {'all': list(range(model.num_fits)),
                          'non-zeros': list(embedding.get_active_channels(self.active_threshold))}
+        self.averaging_number = self.generated.averaging_number
+        self.generator_iters = self.generated.generator_iters
          
         # Define Sliders
-        self.p_select = pn.widgets.Select(name='Particle', options=self.particle_dict)  # Replace with actual options
-        self.e_select = pn.widgets.Select(name='EELS Channel', options=[k for k in range(dset.eels_chs)])  # Replace with actual options
-        self.c_select = pn.widgets.DiscreteSlider(name='Emb Channel', value=self.channels[channel_type][0], options=self.channels[channel_type])  # Replace with actual options
-        self.s_select = pn.widgets.DiscreteSlider(name='Spectral Value', options=[s for s in range(dset.spec_len)])  # Replace with actual options
+        self.c_select = pn.widgets.DiscreteSlider(name='Emb Channel', value=self.channels[channel_type][0], options=self.channels[channel_type])  
+        self.g_select = pn.widgets.DiscreteSlider(name='Generate Reference Value', options=[s for s in range(self.generator_iters)]) 
         
         # Define Stream tools
         # multiply to image you wanna tap on
-        self.max_ =  max([s[0] for s in self.dset.meta['shape_list']])
         self.blank_img = hv.Image( np.zeros((self.max_,self.max_))
                                 ).opts(tools=['tap'], axiswise=True, shared_axes=False)
         # self.blank_spec = hv.Curve( np.zeros(dset.spec_len)

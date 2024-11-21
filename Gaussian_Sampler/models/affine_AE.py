@@ -277,7 +277,7 @@ class Affine_AE_2D_module(nn.Module):
         return x, emb, translation, rotation, scale, shear, mask_parameter
 
 
-class Affine_AE_2D(STEM_AE.ConvAutoencoder):
+class Affine_AE_2D():
     def __init__(self, 
                  device,
                  sampler, 
@@ -314,16 +314,17 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                                     'conv_size': 128,
                                     'kernel_size': 3},
                  autoencoder = Affine_AE_2D_module,
+                 
+                 learning_rate = 1e-4,
                  *args, **kwargs):
-        super(Affine_AE_2D, self).__init__(*args,device=device, **kwargs)
-        
-        if sampler==None: 
-            self.sampler = None
-        else:
-            self.sampler = sampler(**sampler_kwargs)
-        self.collate_fn = collate_fn
+        super(Affine_AE_2D, self).__init__()
         
         self.device = device
+        self.learning_rate = learning_rate
+        
+        if sampler==None: self.sampler = None
+        else: self.sampler = sampler(**sampler_kwargs)
+        self.collate_fn = collate_fn
         
         for key, value in affine_encoder_kwargs.items():
             setattr(self, 'affine_encoder_'+key, value)
@@ -349,9 +350,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                                        decoder = self.decoder).to(self.device)
         
         # sets the optimizers
-        self.optimizer = optim.Adam(
-            self.autoencoder.parameters(), lr=self.learning_rate
-        )
+        self.optimizer = optim.Adam(self.autoencoder.parameters(), lr=self.learning_rate)
         
     @property
     def checkpoint(self):
@@ -376,7 +375,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
               ln_parm=1,
               epoch_=None,
               folder_path='./',
-              batch_size=32,
+              batch_size=None,
               best_train_loss=None,
               binning=False,
               **kwargs):
@@ -564,7 +563,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                 rotation_ = h[f'rotation_{check}']                    
                 translation_ = h[f'translation_{check}']
             except:
-                embedding_ = h.create_dataset(f'embedding_{check}', data = np.zeros([data.shape[0], self.embedding_size]))
+                embedding_ = h.create_dataset(f'embedding_{check}', data = np.zeros([data.shape[0], self.encoder_embedding_size]))
                 scale_shear_ = h.create_dataset(f'scale_{check}', data = np.zeros([data.shape[0],6]))
                 scale_shear_ = h.create_dataset(f'shear_{check}', data = np.zeros([data.shape[0],6]))
                 rotation_ = h.create_dataset(f'rotation_{check}', data = np.zeros([data.shape[0],6]))
@@ -694,7 +693,7 @@ class Affine_AE_2D(STEM_AE.ConvAutoencoder):
                                             translation=translation,
                                             mask_parameter=mask_parameter)
                         # generates diffraction pattern
-                        generated[:,i,j] =\
+                        generated[i,j] =\
                             self.generate_spectra(**dec_kwargs).squeeze().cpu().detach().numpy()       
     
     def decoder_kwargs(self,channel,ref_value,data,averaging_number,**kwargs):
