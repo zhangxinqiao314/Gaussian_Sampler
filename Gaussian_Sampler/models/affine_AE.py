@@ -208,32 +208,32 @@ class Affine_Transform(nn.Module):
         if self.rotation is not None:
             a_1 = torch.cos(rotate)
             a_2 = torch.sin(rotate)
-            b1 = torch.stack((a_1,a_2), dim=1).squeeze()
-            b2 = torch.stack((-a_2,a_1), dim=1).squeeze()
-            b3 = torch.stack((a_5,a_5), dim=1).squeeze()
+            b1 = torch.stack((a_1,a_2), dim=1)#.squeeze()
+            b2 = torch.stack((-a_2,a_1), dim=1)#.squeeze()
+            b3 = torch.stack((a_5,a_5), dim=1)#.squeeze()
             rotation = torch.stack((b1, b2, b3), dim=2)
         else: rotation = None
             
         if self.scale:
             # separate scale and shear
-            s1 = torch.stack((scale_1, a_5), dim=1).squeeze()
-            s2 = torch.stack((a_5, scale_2), dim=1).squeeze()
-            s3 = torch.stack((a_5, a_5), dim=1).squeeze()
+            s1 = torch.stack((scale_1, a_5), dim=1)#.squeeze()
+            s2 = torch.stack((a_5, scale_2), dim=1)#.squeeze()
+            s3 = torch.stack((a_5, a_5), dim=1)#.squeeze()
             scale = torch.stack((s1, s2, s3), dim=2)
         else: scale = None
         
         if self.shear:
-            sh1 = torch.stack((a_4, shear_1), dim=1).squeeze()
-            sh2 = torch.stack((shear_2, a_4), dim=1).squeeze()
-            sh3 = torch.stack((a_5, a_5), dim=1).squeeze()
+            sh1 = torch.stack((a_4, shear_1), dim=1)#.squeeze()
+            sh2 = torch.stack((shear_2, a_4), dim=1)#.squeeze()
+            sh3 = torch.stack((a_5, a_5), dim=1)#.squeeze()
             shear = torch.stack((sh1, sh2, sh3), dim=2)
         else: shear = None
 
         # Add the rotation after the shear and strain
         if self.translation:
-            d1 = torch.stack((a_4,a_5), dim=1).squeeze()
-            d2 = torch.stack((a_5,a_4), dim=1).squeeze()
-            d3 = torch.stack((trans_1,trans_2), dim=1).squeeze()
+            d1 = torch.stack((a_4,a_5), dim=1)#.squeeze()
+            d2 = torch.stack((a_5,a_4), dim=1)#.squeeze()
+            d3 = torch.stack((trans_1,trans_2), dim=1)#.squeeze()
             translation = torch.stack((d1, d2, d3), dim=2)
         else: translation = None
 
@@ -457,7 +457,27 @@ class Affine_AE_2D():
         
         torch.save(checkpoint, file_path)
         self.checkpoint = file_path
-                    
+  
+    def load_weights(self, path_checkpoint,return_checkpoint=False):
+        """loads the weights from a checkpoint
+
+        Args:
+            path_checkpoint (str): path where checkpoints are saved 
+            return_checkpoint (bool, Optional): whether to return the checkpoint loaded. Default False
+        
+        Returns:
+            checkpoint (Optional)
+        """
+        self.checkpoint = path_checkpoint
+        checkpoint = torch.load(path_checkpoint)
+        self.autoencoder.load_state_dict(checkpoint['net'])
+        self.encoder.load_state_dict(checkpoint['encoder'])
+        self.decoder.load_state_dict(checkpoint['decoder'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.start_epoch = checkpoint['epoch']
+        
+        if return_checkpoint: return checkpoint
+                  
     def loss_function(self,
                       train_iterator,
                       coef=0,
@@ -531,8 +551,8 @@ class Affine_AE_2D():
                     # print('')
 
             # reconstruction loss
-            loss = F.mse_loss(x.reshape(sh[0],-1,sh[-2],sh[-1]), 
-                              predicted_x.reshape(sh[0],-1,sh[-2],sh[-1]), 
+            loss = F.mse_loss(x.reshape(-1,sh[-2],sh[-1]), 
+                              predicted_x.reshape(-1,sh[-2],sh[-1]), 
                               reduction='mean')
             
             loss = loss + reg_loss_1 + contras_loss - maxi_loss
@@ -547,7 +567,7 @@ class Affine_AE_2D():
                                             
     def get_embeddings(self, data, batch_size=32, train=False, check=None):
         # builds the dataloader
-        dataloader = DataLoader(data,batch_size, shuffle=False)
+        dataloader = DataLoader(data, batch_size, shuffle=False)
 
         try:
             try: h = h5py.File(self.emb_h5_path,'r+')
@@ -718,7 +738,6 @@ class Affine_AE_2D():
             try: kwargs[key] = torch.from_numpy(value.reshape(1,2,3)).float().to(self.device)
             except: pass
         return self.autoencoder._decoder(x.float(), **kwargs)
-
 
 
 class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
