@@ -62,7 +62,6 @@ class Gaussian_Sampler(Sampler):
         # This can be adjusted based on the desired number of iterations per epoch
         return (self.shape[0]*self.shape[1]) // self.batch_size
     
-
-
-def custom_collate_fn(batch): 
-    return torch.tensor(batch[0])
+    @staticmethod
+    def custom_collate_fn(batch): 
+        return torch.tensor(batch).float().squeeze()

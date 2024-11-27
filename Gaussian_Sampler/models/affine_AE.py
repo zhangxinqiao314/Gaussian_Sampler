@@ -453,7 +453,7 @@ class Affine_AE_2D():
                     'training_params': kwargs,
                     }
         file_path = folder_path + f'/({datetime_})_epoch:{epoch:04d}_'+\
-                    f'trainloss:{train_loss:.4f}.pkl'
+                    f'trainloss:{train_loss:.4e}.pkl'
         
         torch.save(checkpoint, file_path)
         self.checkpoint = file_path
@@ -659,6 +659,7 @@ class Affine_AE_2D():
         try: # try opening h5 file
             try: # make new file
                 hg = h5py.File(self.gen_h5_path,'w')
+                print(f'creating {self.emb_h5_path} file')
             except: # open existing file
                 hg = h5py.File(self.gen_h5_path,'r+')
 
