@@ -1,1 +1,4 @@
 # Requirements
+py4dstem
+PyMuPDF
+pdf2image
