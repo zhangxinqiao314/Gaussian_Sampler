@@ -13,6 +13,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __init__(self, scaled=False, shape=(100,100,500), save_folder='./', overwrite=False):
         '''dset is x*y,spec_len'''
         self.save_folder = save_folder
+        self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
         self.fwhm, self.nu_ = 50, 0.7
         self.shape = shape
         self.spec_len = self.shape[-1]
@@ -23,7 +24,6 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
         self.noise_ = self.h5_keys()[0]
-        self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
         
     @staticmethod
     def noise(i): 
