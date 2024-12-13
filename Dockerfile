@@ -9,6 +9,7 @@ ENV TZ=Etc/UTC
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     wget \
+    ca-certificates \
     git \
     && pip install --no-cache-dir jupyterlab \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -21,7 +22,7 @@ RUN pip install --no-cache-dir -r /workspace/m3_learning/m3_learning/src/require
 
 # Install Gaussian Sampler
 RUN rm -rf /workspace/Gaussian_Sampler
-RUN mkdir -p /workspace && git clone --single-branch --branch main https://github.com/zhangxinqiao314/Gaussian_Sampler.git
+RUN mkdir -p /workspace && git clone https://github.com/zhangxinqiao314/Gaussian_Sampler.git /workspace/Gaussian_Sampler
 # install packages
 RUN pip install --no-cache-dir -r /workspace/Gaussian_Sampler/requirements.txt
 
