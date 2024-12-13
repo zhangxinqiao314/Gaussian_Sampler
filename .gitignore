@@ -1,0 +1,8 @@
+# trained models
+*.pt
+*.pth
+*.pkl
+
+# cpython files
+*/__pycache__/*
+*.pyc
