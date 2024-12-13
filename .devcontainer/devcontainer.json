@@ -1,0 +1,16 @@
+{
+    "name": "Jupyter Notebook Container",
+    "build": {
+      "dockerfile": "../Dockerfile"
+    },
+    "settings": {
+      "jupyter.jupyterServerType": "remote"
+    },
+    "extensions": [
+      "ms-python.python",
+      "ms-toolsai.jupyter"
+    ],
+    "remoteUser": "root",
+    "forwardPorts": [8888]
+}
+  

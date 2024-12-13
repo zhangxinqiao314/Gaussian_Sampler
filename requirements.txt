@@ -2,3 +2,5 @@
 py4dstem
 PyMuPDF
 pdf2image
+holoviews
+panel
