@@ -4,3 +4,4 @@ PyMuPDF
 pdf2image
 holoviews
 panel
+wandb

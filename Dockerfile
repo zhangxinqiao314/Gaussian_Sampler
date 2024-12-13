@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r /workspace/m3_learning/m3_learning/src/require
 # Install Gaussian Sampler
 RUN rm -rf /workspace/Gaussian_Sampler
 RUN mkdir -p /workspace && git clone https://github.com/zhangxinqiao314/Gaussian_Sampler.git /workspace/Gaussian_Sampler
+
 # install packages
 RUN pip install --no-cache-dir -r /workspace/Gaussian_Sampler/requirements.txt
 
