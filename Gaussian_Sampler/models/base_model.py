@@ -54,7 +54,7 @@ class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
         # builds the dataloader
         if dataloader_init is None:
             self.DataLoader_ = DataLoader(
-                data.reshape(-1, 256, 256), batch_size=batch_size, shuffle=True)
+                data.reshape(-1,data.shape[-2], data.shape[-1]), batch_size=batch_size, shuffle=True)
         else:
             self.DataLoader_ = DataLoader(data, **dataloader_init)
 

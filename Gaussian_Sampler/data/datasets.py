@@ -16,13 +16,14 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.fwhm, self.nu_ = 50, 0.7
         self.shape = shape
         self.spec_len = self.shape[-1]
-        self.mask = np.zeros((self.shape[0], self.shape[1])); self.mask[10:,10:] = 1
+        self.mask = np.zeros((self.shape[0], self.shape[1])); self.mask[10:,10:] = 1; self.mask = self.mask.flatten()
         if overwrite: self.generate_pv_data()
         
         self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
         self.noise_ = self.h5_keys()[0]
+        self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
         
     @staticmethod
     def noise(i): 
@@ -58,7 +59,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                 data[non_zero] = data[non_zero]/maxes[non_zero]
             return idx, data
     
-    def open_h5(self): return h5py.File(f'{self.save_folder}fake_pv_uniform.h5','a')
+    def open_h5(self): return h5py.File(self.h5_name,'a')
     
     def h5_keys(self): return list(self.open_h5().keys())
     
@@ -71,17 +72,18 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             for i in tqdm(range(20)):
                 noise_ = Fake_PV_Dataset.noise(i)
                 try: dset = f[f'{noise_:06.3f}_noise']
-                except: dset = f.create_dataset(f'{noise_:06.3f}_noise', shape=(100,100,500), dtype=np.float32)
-                for x_ in range(dset.shape[0]):
-                    for y_ in range(dset.shape[1]):
+                except: dset = f.create_dataset(f'{noise_:06.3f}_noise', 
+                                                shape=(self.shape[0]*self.shape[1],self.shape[2]), dtype=np.float32)
+                for x_ in range(self.shape[0]):
+                    for y_ in range(self.shape[1]):
                         I = y_/5
                         A = Fake_PV_Dataset.pv_area(I, w=self.fwhm, nu=self.nu_)
-                        if self.mask[x_, y_]:
-                            dset[x_, y_] = Fake_PV_Dataset.add_noise(I,
+                        if self.mask[x_+y_*self.shape[0]] == 1:
+                            dset[x_+y_*self.shape[0]] = Fake_PV_Dataset.add_noise(I,
                                                     Fake_PV_Dataset.write_pseudovoight(A, x_*2, self.fwhm, self.nu_),
                                                     noise = noise_)
-                        else: dset[x_, y_] = Fake_PV_Dataset.add_noise(I,
-                                                       np.zeros(dset.shape[2]),
+                        else: dset[x_+y_*self.shape[0]] = Fake_PV_Dataset.add_noise(I,
+                                                       np.zeros(self.shape[-1]),
                                                        noise = noise_)
                 f.flush()
 

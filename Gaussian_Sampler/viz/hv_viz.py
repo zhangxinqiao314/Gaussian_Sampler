@@ -9,7 +9,7 @@ def test():
   
 class Fake_PV_viz:
     '''testing'''
-    def __init__(self, dset):
+    def __init__(self, dset, sampler=None):
         self.dset = dset
         self.dset_list = dset.h5_keys()
         # self.dset_list = [  '00.000_noise',
@@ -34,6 +34,9 @@ class Fake_PV_viz:
         #                     '00.926_noise']
         self.parameters_list = ['Amplitude', 'Center', 'Width', 'Nu']
         self.samplers = ['scipy','gaussian']
+        self.colors = ['green','orange','yellow','brown','pink','gray', 'white', 'magenta', 'cyan','purple']
+
+        if sampler is not None: self.sampler = sampler
         
         # Create interactive widgets
         self.i_slider = pn.widgets.IntSlider(name='Noise std', value=0, start=0, end=len(self.dset_list )-1)
@@ -41,29 +44,43 @@ class Fake_PV_viz:
         self.y_slider = pn.widgets.IntSlider(name='y', value=25, start=0, end=dset.shape[1]-1)
         self.s_slider = pn.widgets.IntSlider(name='spectral value', value=0, start=0, end=dset.shape[2]-1)
         self.sampler_selector = pn.widgets.Select(name='Sampler', options=self.samplers)
-
-
+        
+        self.button_stream = streams.Stream.define('ButtonStream', button=False)()
+        self.button = pn.widgets.Button(name='New Batch', button_type='primary')
+        self.button.on_click(lambda event: self.button_stream.event(button=True))
+        self.batch_inds = next(iter(self.sampler))
+        def trigger(click): self.batch_inds = next(iter(self.sampler))
+        pn.bind(trigger, self.button_stream.param.button)
+        
         # Dynamic maps for the red dot and vertical line
-        self.dot_dmap = hv.DynamicMap(pn.bind(self.show_dot, x=self.x_slider, y=self.y_slider))
-        self.vline_dmap = hv.DynamicMap(pn.bind(self.show_vline, s=self.s_slider))
+        self.dot_dmap = hv.DynamicMap(pn.bind(self.show_dot, 
+                                              x=self.x_slider, y=self.y_slider))
+        self.vline_dmap = hv.DynamicMap(pn.bind(self.show_vline, 
+                                                s=self.s_slider))
 
         # Create dynamic maps for image and spectrum plots
         self.img_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_img, 
                                               i=self.i_slider, s=self.s_slider))
         self.img_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_img_scaled, 
                                                      i=self.i_slider, s=self.s_slider))
-        
-        self.fit_img_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, 
-                                                  i=self.i_slider, s=self.s_slider, sampler=self.sampler_selector))
-        self.fit_img_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, 
-                                                         i=self.i_slider, s=self.s_slider, sampler=self.sampler_selector))
-        
         self.spec_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
                                                i=self.i_slider, x=self.x_slider, y=self.y_slider))
         self.spec_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
                                                       i=self.i_slider, x=self.x_slider, y=self.y_slider))
         self.zero_spec_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
                                                     i=0, x=self.x_slider, y=self.y_slider))
+        
+        # Create dynamic maps for batch plots
+        self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
+                                                     i=self.i_slider, trigger=self.button_stream.param.button))
+        self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, 
+                                                     i=self.i_slider, trigger=self.button_stream.param.button) )
+        
+        # Create dynamic maps for embedding and fits
+        self.fit_img_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, 
+                                                  i=self.i_slider, s=self.s_slider, sampler=self.sampler_selector))
+        self.fit_img_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, 
+                                                         i=self.i_slider, s=self.s_slider, sampler=self.sampler_selector))
         
         self.fit_spec_dmap = hv.DynamicMap(pn.bind(self.plot_fit_spectrum, 
                                                    i=self.i_slider, x=self.x_slider, y=self.y_slider, sampler=self.sampler_selector))
@@ -73,7 +90,7 @@ class Fake_PV_viz:
         self.embedding_dmaps = [hv.DynamicMap(pn.bind(self.plot_embedding_img, 
                                                       i=self.i_slider, par=par, sampler=self.sampler_selector)
                                               )*self.dot_dmap for par in range(4)]
-    
+        
     @lru_cache(maxsize=10)
     def select_datacube(self,i):
         self.dset.noise_ = self.dset.h5_keys()[i]
@@ -105,23 +122,24 @@ class Fake_PV_viz:
     ############################################
     
     def plot_datacube_img(self, i, s):
-        datacube = self.select_datacube(i)[:]
-        data_ = np.flipud(datacube[:, :, s].T)
+        datacube = self.select_datacube(i)[:].reshape(self.dset.shape[0],self.dset.shape[1],self.dset.shape[2])
+        # data_ = np.flipud(datacube[:, :, s].T)/
         return hv.Image(
-                    data_, bounds=(0, 0, data_.shape[0], data_.shape[1]),
+                    datacube[:,:,s], bounds=(0,0,datacube.shape[0],datacube.shape[1]),
                     kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                     vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(
                             cmap='viridis', colorbar=True, clim=(0, datacube.max()),
                             width=350, height=300, title=f'Noise:{self.dset_list[i]}')
+    
     def plot_datacube_img_scaled(self, i, s):
-        datacube = self.select_datacube(i)[:]
-        data_ = np.flipud(datacube[:, :, s].T)
-        
-        return hv.Image(data_, bounds=(0, 0, data_.shape[0], data_.shape[1]),
+        datacube = self.select_datacube(i).reshape(self.dset.shape[0],self.dset.shape[1],self.dset.shape[2])
+        data_ = np.flipud(datacube[:, s].reshape(self.shape[0],self.shape[1]).T)
+        return hv.Image(data_, bounds=(0,0,self.dset.shape[0],self.dset.shape[1]),
                         kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
-                        ).opts(cmap='viridis', colorbar=True, clim=(0, datacube.max()),
+                        ).opts(
+                            cmap='viridis', colorbar=True, clim=(0, datacube.max()),
                             width=350, height=300, title='Datacube Intensity')
 
     def plot_embedding_img(self, i, par, sampler):
@@ -146,13 +164,14 @@ class Fake_PV_viz:
 
 
     def plot_datacube_spectrum(self, i, x, y):
-        datacube = self.select_datacube(i)
+        datacube = self.select_datacube(i).reshape(self.dset.shape)
         return hv.Curve(datacube[x, y],
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(width=350, height=300,
                                 ylim=(0, datacube.max()), xlim=(0, 500),
                                 axiswise=True, shared_axes=False)
+    
     def plot_fit_spectrum(self, i, x, y, sampler, noise):
         datacube = self.select_fits(i, sampler, noise)
         return hv.Curve(datacube[x, y],
@@ -170,27 +189,57 @@ class Fake_PV_viz:
             axiswise=True, shared_axes=False)
         
     def layout_input(self):
-        dmap = pn.Column(
+        return pn.Column(
         pn.Row(self.i_slider, self.s_slider),
         pn.Row(self.x_slider, self.y_slider),
-        (self.img_dmap*self.dot_dmap + 
+        (self.img_dmap*self.dot_dmap + \
          self.spec_dmap*self.vline_dmap*self.zero_spec_dmap).opts(shared_axes=True, axiswise=True),
-        # (self.img_scaled_dmap*self.dot_dmap + 
-        #  self.spec_scaled_dmap*self.vline_dmap*self.zero_spec_dmap).opts(shared_axes=True, axiswise=True)
-        )
+                        )
+
+
+    def split_list(self,): # trigger if dset changes
+        return [self.batch_inds[i:i + self.sampler.num_neighbors] for i in range(0, len(self.batch_inds), self.sampler.num_neighbors)]
+    def get_points_idx(self): 
+        clumps = self.split_list()
+        return [[ (int(ind / self.dset.shape[0]),ind % self.dset.shape[0]
+                    ) for ind in clump
+                ] for clump in clumps ]
+    def get_points_data(self):
+        dset = self.select_datacube(self.i_slider.value)
+        clumps = self.split_list()
+        return [ np.asarray([dset[ind] for ind in clump],dtype=np.float32
+                         ) for clump in clumps ]
+        
+    def plot_batch_points(self,i,trigger):
+        pts = self.get_points_idx()                                             
+        scatter_list = []
+        for p,pt in enumerate(pts):
+            scatter_list.append( hv.Scatter(pt).opts( color=self.colors[p], size=3, marker='o',
+                                                    axiswise=True, shared_axes=False))
+        return hv.Overlay(scatter_list).opts(shared_axes=True, axiswise=True)
+    
+    def plot_batch_spectrum(self,i,trigger):
+        data = self.get_points_data()
+        curves_list = []
+        for d,dat in enumerate(data):
+            curves_list.append(hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
+                                                            color=self.colors[d],
+                                            ylim=(0, self.dset.maxes.max()), xlim=(0, 500),
+                                            axiswise=True, shared_axes=False, 
+                                            line_width=1, line_dash='dashed'))
+        return hv.Overlay(curves_list).opts(shared_axes=True, axiswise=True) 
+    
+    def layout_batch(self):
+        dmap = pn.Column(#pn.Row(button),
+                pn.Row(self.i_slider, self.s_slider),
+                pn.Row(self.x_slider, self.y_slider),
+                (self.img_dmap*self.dot_dmap*self.batch_inds_dmap + 
+                    self.spec_dmap*self.zero_spec_dmap*self.batch_spec_dmap*self.vline_dmap).opts(shared_axes=True,axiswise=True)
+            )
 
         return dmap
     
-    # def plot_batch(self,i,noise,trigger=False):
-    #     dset = select_datacube(i,noise)
-    #     clumps = split_list(dset,trigger)
-    #     pts = [ [(int(ind / x_), ind % x_) for ind in clump] for clump in clumps ]
-    #     scatter_list = []
-    #     for p,pt in enumerate(pts):
-    #         scatter_list.append( hv.Scatter(pt).opts( color=colors[p], size=3, marker='o',
-    #                                                 axiswise=True, shared_axes=False))
-    #     return hv.Overlay(scatter_list).opts(shared_axes=True, axiswise=True)
-
+    
 class Py4DSTEM_hv_viz():
     def __init__(self, dataset, model, embedding, generated,):
         self.dataset = dataset
