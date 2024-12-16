@@ -1,6 +1,9 @@
 # Use an official Python image as the base
 FROM python:3.10-slim
 
+# Set the working directory inside the container
+WORKDIR /workspace
+
 # Set environment variables to avoid prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
@@ -11,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
     git \
-    && pip install --no-cache-dir jupyterlab \
+    && pip install --upgrade --no-cache-dir jupyterlab \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install m3_learning repo
@@ -20,15 +23,10 @@ RUN mkdir -p /workspace && git clone --single-branch --branch Northwestern-H100-
 # Install packages
 RUN pip install --no-cache-dir -r /workspace/m3_learning/m3_learning/src/requirements.txt
 
-# Install Gaussian Sampler
-RUN rm -rf /workspace/Gaussian_Sampler
-RUN mkdir -p /workspace && git clone https://github.com/zhangxinqiao314/Gaussian_Sampler.git /workspace/Gaussian_Sampler
-
-# install packages
-RUN pip install --no-cache-dir -r /workspace/Gaussian_Sampler/requirements.txt
-
-# Set the working directory inside the container
-WORKDIR /workspace
+# install Gaussian_Sampler packages
+COPY requirements.txt /workspace/requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY . /workspace
 
 # Expose the Jupyter Notebook port
 EXPOSE 8888
