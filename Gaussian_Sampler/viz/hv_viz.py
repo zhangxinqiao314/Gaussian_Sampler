@@ -1,4 +1,5 @@
 from functools import lru_cache
+from tabnanny import check
 import holoviews as hv
 import panel as pn
 import numpy as np
@@ -43,7 +44,13 @@ class Fake_PV_viz:
         self.x_slider = pn.widgets.IntSlider(name='x', value=25, start=0, end=dset.shape[0]-1)
         self.y_slider = pn.widgets.IntSlider(name='y', value=25, start=0, end=dset.shape[1]-1)
         self.s_slider = pn.widgets.IntSlider(name='spectral value', value=0, start=0, end=dset.shape[2]-1)
+        self.batch_checkboxes = pn.widgets.CheckBoxGroup(name='Batch Checkboxes', 
+            options=list(range(int(np.ceil(self.sampler.batch_size/self.sampler.num_neighbors)))),
+            value = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            inline=True)
+        
         self.sampler_selector = pn.widgets.Select(name='Sampler', options=self.samplers)
+        
         
         self.button_stream = streams.Stream.define('ButtonStream', button=False)()
         self.button = pn.widgets.Button(name='New Batch', button_type='primary')
@@ -72,9 +79,11 @@ class Fake_PV_viz:
         
         # Create dynamic maps for batch plots
         self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
-                                                     i=self.i_slider, trigger=self.button_stream.param.button))
+                                                     checked=self.batch_checkboxes))
+                                                    #  trigger=self.button_stream.param.button))
         self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, 
-                                                     i=self.i_slider, trigger=self.button_stream.param.button) )
+                                                     checked=self.batch_checkboxes))
+                                                    #  trigger=self.button_stream.param.button) )
         
         # Create dynamic maps for embedding and fits
         self.fit_img_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, 
@@ -210,29 +219,40 @@ class Fake_PV_viz:
         return [ np.asarray([dset[ind] for ind in clump],dtype=np.float32
                          ) for clump in clumps ]
         
-    def plot_batch_points(self,i,trigger):
+    def plot_batch_points(self, checked):
         pts = self.get_points_idx()                                             
         scatter_list = []
-        for p,pt in enumerate(pts):
-            scatter_list.append( hv.Scatter(pt).opts( color=self.colors[p], size=3, marker='o',
-                                                    axiswise=True, shared_axes=False))
+        for p, pt in enumerate(pts):
+            if p in checked:
+                point = hv.Scatter(pt).opts(color=self.colors[p], size=3, marker='o', alpha=1,
+                                            axiswise=True, shared_axes=False)
+            else:
+                point = hv.Scatter(pt).opts(color=self.colors[p], size=3, marker='o', alpha=0.1,
+                                            axiswise=True, shared_axes=False)
+            scatter_list.append(point)
         return hv.Overlay(scatter_list).opts(shared_axes=True, axiswise=True)
     
-    def plot_batch_spectrum(self,i,trigger):
+    def plot_batch_spectrum(self, checked):
         data = self.get_points_data()
         curves_list = []
         for d,dat in enumerate(data):
-            curves_list.append(hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
-                                                            color=self.colors[d],
+            if d in checked: curve = hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
+                                            color=self.colors[d], alpha=1,
                                             ylim=(0, self.dset.maxes.max()), xlim=(0, 500),
-                                            axiswise=True, shared_axes=False, 
-                                            line_width=1, line_dash='dashed'))
+                                            axiswise=True, shared_axes=False, line_width=1)
+            else: curve = hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
+                                            color=self.colors[d], alpha=0.1,
+                                            ylim=(0, self.dset.maxes.max()), xlim=(0, 500),
+                                            axiswise=True, shared_axes=False, line_width=1)
+            curves_list.append( curve )
+            
         return hv.Overlay(curves_list).opts(shared_axes=True, axiswise=True) 
     
     def layout_batch(self):
         dmap = pn.Column(#pn.Row(button),
                 pn.Row(self.i_slider, self.s_slider),
                 pn.Row(self.x_slider, self.y_slider),
+                pn.Row(self.batch_checkboxes),
                 (self.img_dmap*self.dot_dmap*self.batch_inds_dmap + 
                     self.spec_dmap*self.zero_spec_dmap*self.batch_spec_dmap*self.vline_dmap).opts(shared_axes=True,axiswise=True)
             )

@@ -2,17 +2,82 @@ from m3_learning.nn.STEM_AE import STEM_AE
 import numpy as np
 import torch
 from torch.utils.data import Sampler
+import torch.nn as nn
+import torch.optim as optim
 from m3_learning.nn.Regularization.Regularizers import ContrastiveLoss, DivergenceLoss
 from tqdm import tqdm
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from m3_learning.util.file_IO import make_folder
 
+# TODO: Get rid of connections to m3learning as much as possible. Only keep utility functions and regularizers
 class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
     def __init__(self, sampler, sampler_kwargs, collate_fn, *args, **kwargs):
         super(Averaging_Loss_AE, self).__init__(*args, **kwargs)
+        
         self.sampler = sampler(**sampler_kwargs)
+        self.collate_fn = collate_fn
        
+       
+    def compile_models(self, autoencoder, models, model_init):
+        """
+        Initializes and compiles a set of PyTorch models and integrates them into an autoencoder architecture.
+
+        Parameters
+        ----------
+        autoencoder : callable
+            A class or function that constructs the autoencoder architecture.
+            Should accept a dictionary of initialized sub-models as its argument.
+
+        models : dict of torch.nn.Module
+            Keyword arguments where each value is an uninitialized PyTorch module class.
+            Example: encoder=EncoderClass, decoder=DecoderClass
+
+        model_init : dict
+            Keyword arguments containing initialization parameters for each model.
+            Keys should match the names in `models`.
+            Example: encoder_args={'hidden_dim': 128}, decoder_args={'latent_dim': 32}
+            Note: Each key should be f"{model_name}_args" where model_name is a key in models.
+
+        Returns
+        -------
+        None
+            Initializes the models as instance attributes.
+
+        Example
+        -------
+        >>> class MyAutoencoder:
+        ...     def __init__(self, components):
+        ...         self.encoder = components['encoder']
+        ...         self.decoder = components['decoder']
+        ...
+        >>> class MyVAE:
+        ...     def compile_models(self):
+        ...         self.compile_models(
+        ...             autoencoder=MyAutoencoder,
+        ...             encoder=EncoderNetwork,
+        ...             decoder=DecoderNetwork,
+        ...             encoder_args={'in_dim': 784, 'hidden_dim': 256},
+        ...             decoder_args={'latent_dim': 32, 'out_dim': 784}
+        ...         )
+        """
+        # Initialize each model with its corresponding arguments
+        for name, model_class in models.items():
+            init_args = model_init.get(f"{name}_args", {})
+            setattr(self, name, model_class(**init_args))
+        
+        # Initialize the autoencoder with all compiled models
+        self.autoencoder = autoencoder({
+            name: getattr(self, name) for name in models.keys()
+        })
+            # sets the datatype of the model to float32
+        self.autoencoder.type(torch.float32)
+        
+                # sets the optimizers
+        self.optimizer = optim.Adam(
+            self.autoencoder.parameters(), lr=self.learning_rate
+        )
+        
     def Train(self,
               data,
               max_learning_rate=1e-4,
@@ -191,3 +256,13 @@ class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
             self.optimizer.step()
 
         return train_loss
+    
+    
+class Encoder():
+    pass
+
+class Decoder():
+    pass
+
+class Autoencoder():
+    pass

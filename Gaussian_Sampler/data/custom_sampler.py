@@ -14,7 +14,7 @@ class Gaussian_Sampler(Sampler):
             num_neighbors (int): Number of additional points to sample around the first point. ( best if batch_size % num_neighbors == 0)
         """
         self.dset = dset
-        self.shape = orig_shape # (H, W, X, Y)
+        self.shape = orig_shape # (H, W, *)
         self.batch_size = batch_size
         self.gaussian_std = gaussian_std
         self.num_neighbors = num_neighbors
