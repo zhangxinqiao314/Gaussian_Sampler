@@ -75,7 +75,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                     for y_ in range(self.shape[1]):
                         I = y_/5
                         A = Fake_PV_Dataset.pv_area(I, w=self.fwhm, nu=self.nu_)
-                        if self.mask[x_+y_*self.shape[0]] == 1:
+                        if self.mask[y_+x_*self.shape[0]] == 1:
                             dset[x_+y_*self.shape[0]] = Fake_PV_Dataset.add_noise(I,
                                                     Fake_PV_Dataset.write_pseudovoight(A, x_*2, self.fwhm, self.nu_),
                                                     noise = noise_)

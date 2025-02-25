@@ -11,14 +11,13 @@ from torch.utils.data import DataLoader
 from m3_learning.util.file_IO import make_folder
 
 # TODO: Get rid of connections to m3learning as much as possible. Only keep utility functions and regularizers
-class Averaging_Loss_AE(STEM_AE.ConvAutoencoder):
+class Averaging_Loss_AE():
     def __init__(self, sampler, sampler_kwargs, collate_fn, *args, **kwargs):
         super(Averaging_Loss_AE, self).__init__(*args, **kwargs)
         
         self.sampler = sampler(**sampler_kwargs)
         self.collate_fn = collate_fn
-       
-       
+
     def compile_models(self, autoencoder, models, model_init):
         """
         Initializes and compiles a set of PyTorch models and integrates them into an autoencoder architecture.

@@ -35,7 +35,7 @@ class Fake_PV_viz:
         #                     '00.926_noise']
         self.parameters_list = ['Amplitude', 'Center', 'Width', 'Nu']
         self.samplers = ['scipy','gaussian']
-        self.colors = ['green','orange','yellow','brown','pink','gray', 'white', 'magenta', 'cyan','purple']
+        self.colors = ['green','orange','yellow','brown','pink','gray','magenta','cyan','purple','lime','teal','maroon','indigo','gold']
 
         if sampler is not None: self.sampler = sampler
         
@@ -132,9 +132,9 @@ class Fake_PV_viz:
     
     def plot_datacube_img(self, i, s):
         datacube = self.select_datacube(i)[:].reshape(self.dset.shape[0],self.dset.shape[1],self.dset.shape[2])
-        # data_ = np.flipud(datacube[:, :, s].T)/
+        data_ = np.flipud(datacube[:, :, s].T)
         return hv.Image(
-                    datacube[:,:,s], bounds=(0,0,datacube.shape[0],datacube.shape[1]),
+                    data_, bounds=(0,0,datacube.shape[0],datacube.shape[1]),
                     kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                     vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(
@@ -174,6 +174,7 @@ class Fake_PV_viz:
 
     def plot_datacube_spectrum(self, i, x, y):
         datacube = self.select_datacube(i).reshape(self.dset.shape)
+        
         return hv.Curve(datacube[x, y],
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
