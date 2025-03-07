@@ -1,14 +1,17 @@
-from random import shuffle
 import sys
 import os
+
+# remove eventually
 sys.path.append('/home/m3learning/Northwestern/M3Learning-Util/src')
-from STEM_EELS_Curve_Fitting.Data import Sampler
-from m3util.utils.IO import make_folder
+sys.path.append('/home/m3learning/Northwestern/AutoPhysLearn/src')
+
+from random import shuffle
+from m3util.util.IO import make_folder
 from m3util.ml.regularization import Weighted_LN_loss, ContrastiveLoss, DivergenceLoss, Sparse_Max_Loss
 
-from AutoPhysLearn.src.autophyslearn.spectroscopic.nn import Multiscale1DFitter, Conv_Block, FC_Block, block_factory
+from autophyslearn.spectroscopic.nn import Multiscale1DFitter, Conv_Block, FC_Block, block_factory
 
-from ..data.custom_sampler import Gaussian_Sampler, custom_collate_fn
+from ..data.custom_sampler import Gaussian_Sampler
 
 import torch
 from torch import nn, optim
@@ -17,15 +20,95 @@ from torch.utils.data import DataLoader
 
 from datetime import date
 
+
+def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', return_params=False):
+    """Generate 1D Pseudo-Voigt profiles from embedding parameters.
+
+    This function implements the Pseudo-Voigt profile as described in:
+    https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
+
+    The Pseudo-Voigt profile is a linear combination of Gaussian and Lorentzian profiles,
+    controlled by the mixing parameter nu.
+
+    Args:
+        embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
+            - A: Area under curve (index 0)
+            - x: Mean position (index 1)
+            - w: Full Width at Half Maximum (FWHM) (index 2)
+            - nu: Lorentzian character fraction (index 3)
+        dset: Dataset containing spectral information with attribute spec_len
+        limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
+        device (str): Device to run computations on. Defaults to 'cpu'
+        return_params (bool): If True, returns both profile and parameters. Defaults to False
+
+    Returns:
+        torch.Tensor: Pseudo-Voigt profiles of shape (batch_size, num_fits, spec_len)
+        torch.Tensor: (Optional) Parameters [A, x, w, nu] if return_params=True
+    """
+    # TODO: try to have all values in embedding between 0-1
+    A = limits[0] * nn.ReLU()(embedding[..., 0]) # area under curve TODO: best way to scale this?
+    # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
+    x = torch.clamp(limits[1]/2 * nn.Tanh()(embedding[..., 1]) + limits[1]/2, min=1e-3) # mean
+    w = torch.clamp(limits[2]/2 * nn.Tanh()(embedding[..., 2]) + limits[2]/2, min=1e-3) # fwhm
+    nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
+
+    s = x.shape  # (_, num_fits)
+    
+    x_ = torch.arange(dset.spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
+    
+    # Gaussian component
+    gaussian = A.unsqueeze(-1)*(4*torch.log(torch.tensor(2))/torch.pi)**0.5 / w.unsqueeze(-1) * \
+            torch.exp(-4*torch.log(torch.tensor(2)) / w.unsqueeze(-1)**2 * (x_-x.unsqueeze(-1))**2)
+
+    # Lorentzian component (simplified version)
+    lorentzian = A.unsqueeze(-1)*( 2/torch.pi * w.unsqueeze(-1) / \
+                                   (4*(x_-x.unsqueeze(-1))**2 + w.unsqueeze(-1)**2) )
+    
+    # Pseudo-Voigt profile
+    pseudovoigt = nu.unsqueeze(-1)*lorentzian + (1-nu.unsqueeze(-1))*gaussian #+  Ib.unsqueeze(-1)
+
+    if return_params: return pseudovoigt.to(torch.float32), torch.stack([A,x,w,nu],axis=2)
+    return pseudovoigt.to(torch.float32)
+
+
+
 class Fitter_AE:
+    """Autoencoder-based fitter for spectroscopic data.
+
+    This class implements an autoencoder architecture for fitting spectroscopic data,
+    particularly designed for Pseudo-Voigt profiles.
+
+    Args:
+        function (callable): Function to generate profiles from embeddings
+        dset (Dataset): Dataset containing spectroscopic data
+        num_params (int): Number of parameters in the embedding
+        num_fits (int): Number of profiles to fit simultaneously
+        limits (list): Scale factors for the profile parameters
+        learning_rate (float, optional): Learning rate for optimization. Defaults to 1e-3
+        device (str, optional): Device to run computations on. Defaults to 'cuda:0'
+        encoder (class, optional): Encoder architecture class. Defaults to Multiscale1DFitter
+        encoder_params (dict, optional): Parameters for the encoder architecture
+
+    Attributes:
+        dset: The input dataset
+        num_fits: Number of profiles to fit
+        limits: Scale factors for parameters
+        device: Computation device
+        learning_rate: Optimizer learning rate
+        encoder: The encoder model
+        optimizer: Adam optimizer
+        best_train_loss: Best training loss achieved
+        checkpoint: Path to latest checkpoint
+        folder: Directory for saving checkpoints
+    """
     def __init__(self,
                  function, 
                  dset,
                  num_params,
                  num_fits,
                  limits,
+                 learning_rate=1e-3,
                  device='cuda:0',
-                 flatten_from = 1,
                  encoder = Multiscale1DFitter,
                  encoder_params = { "model_block_dict": { # factory wrapper for blocks
                     "hidden_x1": block_factory(Conv_Block)(output_channels_list=[8,6,4], 
@@ -45,8 +128,7 @@ class Fitter_AE:
         self.num_fits = num_fits
         self.limits = limits
         self.device = device
-        self.flatten_from = flatten_from
-            
+        self.learning_rate = learning_rate
         self.encoder = encoder(function = function,
                                 x_data = dset,
                                 input_channels = dset.shape[1],
@@ -54,11 +136,9 @@ class Fitter_AE:
                                 device=device,
                                 **encoder_params
                                 ).to(self.device).type(torch.float32)
-        self.optimizer = optim.Adam(
-            self.Fitter.parameters(), lr=self.learning_rate
-        )
-        self._dataloader = None
-        self._dataloader_sampler = None
+        self.optimizer = optim.Adam( self.encoder.parameters(), lr=self.learning_rate )
+        self.configure_dataloader_sampler()
+        self.configure_dataloader()
         
         self.start_epoch = 0
         self.best_train_loss = float('inf')
@@ -109,12 +189,8 @@ class Fitter_AE:
         
     @property
     def checkpoint_folder(self): return self._checkpoint_folder
-    @checkpoint_folder.setter
-    def checkpoint_folder(self,value): self._checkpoint_folder = value
-    
     @property 
     def checkpoint_file(self): return self._checkpoint_file
-    
     @property
     def check(self): return self._check
     
@@ -127,15 +203,22 @@ class Fitter_AE:
             checkpoint_folder,checkpoint_file = os.path.split(self._checkpoint)
             self._checkpoint_file = checkpoint_file
             self._check = checkpoint_file.split('.pkl')[0]
-            self.checkpoint_folder = checkpoint_folder
+            self._checkpoint_folder = checkpoint_folder
         except:
-            self.check = None
-            self.checkpoint_folder = None
-            self.checkpoint_file = None
+            self._check = None
+            self._checkpoint_folder = None
+            self._checkpoint_file = None
             
     
     def train(self, seed=42, epochs=100, binning=True, weight_by_distance=True):
-        
+        """Train the model.
+
+        Args:
+            seed (int, optional): Random seed for reproducibility. Defaults to 42
+            epochs (int): Number of training epochs. Defaults to 100
+            binning (bool): Whether to use binning in loss calculation. Defaults to True
+            weight_by_distance (bool): Whether to weight samples by distance. Defaults to True
+        """
         today = date.today()
         save_date=today.strftime('(%Y-%m-%d)')
         make_folder(self.folder)
@@ -279,7 +362,29 @@ class Fitter_AE:
     def loss_function(self, train_iterator, coef1=0, coef2=0, coef3=0, coef4=0, coef5=0,
                      ln_parm=1, beta=None, fill_embeddings=False, minibatch_logging_rate=None,
                      binning=False, weight_by_distance=False):
-        """Main loss function with modular components"""
+        """Calculate the loss for training.
+
+        Combines multiple loss components:
+        - MSE loss between input and reconstructed spectra
+        - Weighted LN loss for regularization
+        - Contrastive loss for embedding space structure
+        - Divergence loss for embedding distribution
+        - Sparse max loss for sparsity
+        - L2 batchwise loss for parameter consistency
+
+        Args:
+            train_iterator: DataLoader for training data
+            coef1-5 (float): Coefficients for different loss components
+            ln_parm (float): Parameter for weighted LN loss
+            beta (float, optional): Parameter for variational loss
+            fill_embeddings (bool): Whether to store embeddings
+            minibatch_logging_rate (int, optional): Logging frequency
+            binning (bool): Whether to use binning
+            weight_by_distance (bool): Whether to weight samples by distance
+
+        Returns:
+            dict: Dictionary containing different loss components and total loss
+        """
         self.Fitter.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
