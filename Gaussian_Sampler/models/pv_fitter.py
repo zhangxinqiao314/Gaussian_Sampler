@@ -107,6 +107,7 @@ class Fitter_AE:
                  num_params,
                  num_fits,
                  limits,
+                 input_channels,
                  learning_rate=1e-3,
                  device='cuda:0',
                  encoder = Multiscale1DFitter,
@@ -131,7 +132,7 @@ class Fitter_AE:
         self.learning_rate = learning_rate
         self.encoder = encoder(function = function,
                                 x_data = dset,
-                                input_channels = dset.shape[1],
+                                input_channels = input_channels,
                                 num_params = num_params,
                                 device=device,
                                 **encoder_params
