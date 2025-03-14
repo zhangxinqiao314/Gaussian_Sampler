@@ -8,7 +8,7 @@ from tqdm import tqdm
 import h5py 
 
 class Fake_PV_Dataset(torch.utils.data.Dataset):
-    def __init__(self, scaled=False, shape=(100,100,500), save_folder='./', overwrite=False):
+    def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False):
         '''dset is x*y,spec_len'''
         self.save_folder = save_folder
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
@@ -28,17 +28,15 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         # return (i/20)**(1.5)
         return i/20
     
-    @staticmethod
-    def write_pseudovoight(A,x,w=5,nu=0.25,spec_len=500,x_max=500):
-        x_ = np.linspace(0,x_max-1,spec_len)
+    def write_pseudovoight(self,A,x,w=5,nu=0.25,):
+        x_ = np.linspace(0,self.shape[-1]-1,self.shape[-1])
         lorentz = A*( nu*2/np.pi*w/(4*(x-x_)**2 + w**2) )
         gauss = A * (4*np.log(2)/np.pi**0.5 /w) * np.exp(-4*np.log(2)*(x-x_)**2/w**2)
         y = nu*lorentz + (1-nu)*gauss
         return y
 
-    @staticmethod
-    def add_noise(I,y,noise=0.1,spec_len=500):
-        noise = np.random.normal(0, noise*(I), spec_len) # make some noise even if 0
+    def add_noise(self,I,y,noise=0.1,):
+        noise = np.random.normal(0, noise*(I), self.shape[-1]) # make some noise even if 0
         noisy = y + noise
         noisy[noisy<0] = 0
         return noisy
@@ -65,21 +63,23 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
 
     def generate_pv_data(self):
         print('Generating data...')
-        with self.open_h5() as f:
+        with self.open_h5() as f:   
+
             for i in tqdm(range(20)):
                 noise_ = Fake_PV_Dataset.noise(i)
-                try: dset = f[f'{noise_:06.3f}_noise']
-                except: dset = f.create_dataset(f'{noise_:06.3f}_noise', 
+                try: del f[f'{noise_:06.3f}_noise']
+                except: pass
+                dset = f.create_dataset(f'{noise_:06.3f}_noise', 
                                                 shape=(self.shape[0]*self.shape[1],self.shape[2]), dtype=np.float32)
                 for x_ in range(self.shape[0]):
                     for y_ in range(self.shape[1]):
                         I = y_/5
                         A = Fake_PV_Dataset.pv_area(I, w=self.fwhm, nu=self.nu_)
                         if self.mask[y_+x_*self.shape[0]] == 1:
-                            dset[x_+y_*self.shape[0]] = Fake_PV_Dataset.add_noise(I,
-                                                    Fake_PV_Dataset.write_pseudovoight(A, x_*2, self.fwhm, self.nu_),
+                            dset[x_+y_*self.shape[0]] = self.add_noise(I,
+                                                    self.write_pseudovoight(A, x_*2, self.fwhm, self.nu_),
                                                     noise = noise_)
-                        else: dset[x_+y_*self.shape[0]] = Fake_PV_Dataset.add_noise(I,
+                        else: dset[x_+y_*self.shape[0]] = self.add_noise(I,
                                                        np.zeros(self.shape[-1]),
                                                        noise = noise_)
                 f.flush()
