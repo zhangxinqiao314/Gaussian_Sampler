@@ -7,6 +7,9 @@ import dask.array as da
 from tqdm import tqdm
 import h5py 
 
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.pipeline import Pipeline
+
 class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False):
         '''dset is x*y,spec_len'''
@@ -41,6 +44,16 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         noisy[noisy<0] = 0
         return noisy
 
+    def scale_data(self, unscaled_data):
+        self.scaler = Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())])
+        scaled_data = self.scaler.fit_transform(unscaled_data.reshape(-1, unscaled_data.shape[-1])).reshape(unscaled_data.shape)
+        return scaled_data
+    
+    def unscale_data(self, unscaled_data, scaled_data):
+        self.scaler.fit(unscaled_data.reshape(-1, unscaled_data.shape[-1]))
+        unscaled_data = self.scaler.inverse_transform(scaled_data.reshape(-1, scaled_data.shape[-1])).reshape(scaled_data.shape)
+        return unscaled_data
+
     @staticmethod
     def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
 
@@ -48,12 +61,13 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         with self.open_h5() as f:
-            data = f[self.noise_][idx]
-            if self.scale:
-                maxes = self.maxes[idx]
-                non_zero = np.where(maxes[0,0]>0)
-                data[non_zero] = data[non_zero]/maxes[non_zero]
+            try: data = np.array([f[self.noise_][i] for i in idx])
+            except: data = f[self.noise_][idx]
+            
+            if self.scale: self.scale_data(data)
+                
             return idx, data
+    
     
     def open_h5(self): return h5py.File(self.h5_name, 'a')
     
