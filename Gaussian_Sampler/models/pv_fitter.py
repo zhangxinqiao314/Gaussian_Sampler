@@ -19,9 +19,10 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from datetime import date
+from tqdm import tqdm
 
 
-def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', return_params=False):
+def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', return_params=False,spec_len=None):
     """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
     This function implements the Pseudo-Voigt profile as described in:
@@ -52,7 +53,9 @@ def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', ret
     w = torch.clamp(limits[2]/2 * nn.Tanh()(embedding[..., 2]) + limits[2]/2, min=1e-3) # fwhm
     nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
 
-    s = x.shape  # (_, num_fits)
+    s = x.shape  # (_, num_fits)    
+    if spec_len is not None:
+        s = (s[0],-1,spec_len)
     
     x_ = torch.arange(dset.spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
     
@@ -108,7 +111,7 @@ class Fitter_AE:
                  num_fits,
                  limits,
                  input_channels,
-                 learning_rate=1e-3,
+                 learning_rate=3e-5,
                  device='cuda:0',
                  encoder = Multiscale1DFitter,
                  encoder_params = { "model_block_dict": { # factory wrapper for blocks
@@ -123,13 +126,18 @@ class Fitter_AE:
                                                            max_pool=True),
                     "hidden_embedding": block_factory(FC_Block)(output_size_list=[16,8,4])
                 },
-                "skip_connections": ["hidden_xfc", "hidden_embedding"] }
+                "skip_connections": ["hidden_xfc", "hidden_embedding"] },
+                checkpoint_folder='./checkpoints',
+                sampler=None,
+                sampler_params={},
+                collate_fn=None,
             ):
         self.dset = dset
         self.num_fits = num_fits
         self.limits = limits
         self.device = device
         self.learning_rate = learning_rate
+        self.collate_fn = collate_fn
         self.encoder = encoder(function = function,
                                 x_data = dset,
                                 input_channels = input_channels,
@@ -138,26 +146,24 @@ class Fitter_AE:
                                 **encoder_params
                                 ).to(self.device).type(torch.float32)
         self.optimizer = optim.Adam( self.encoder.parameters(), lr=self.learning_rate )
-        self.configure_dataloader_sampler()
-        self.configure_dataloader()
+        self.configure_dataloader_sampler(sampler=sampler, **sampler_params)
+        self.configure_dataloader(collate_fn=collate_fn)
         
         self.start_epoch = 0
         self.best_train_loss = float('inf')
         self.checkpoint = None
-        self.folder = None
-        self.optimizer = None
         self.scheduler = None
+        self._checkpoint_folder = checkpoint_folder
         
     @property
-    def dataloader_sampler(self):
-        return self._dataloader_sampler
+    def dataloader_sampler(self): return self._dataloader_sampler   
     def configure_dataloader_sampler(self, **kwargs):
         '''Set the sampler for the dataloader'''
         batch_size = kwargs.get('batch_size', 32)
         orig_shape = kwargs.get('orig_shape', self.dset.shape)
         gaussian_std=kwargs.get('gaussian_std', 5)
         num_neighbors=kwargs.get('num_neighbors', 10)
-        sampler = kwargs.get('Sampler', None)
+        sampler = kwargs.get('sampler', None)
         
         # builds the dataloader
         if sampler is None: 
@@ -166,8 +172,7 @@ class Fitter_AE:
             self._dataloader_sampler = Gaussian_Sampler(self.dset, orig_shape, batch_size, gaussian_std, num_neighbors)
     
     @property
-    def dataloader(self):
-        return self._dataloader
+    def dataloader(self): return self._dataloader
     def configure_dataloader(self, **kwargs):
         '''Set the dataloader for the fitter
         Args:
@@ -176,16 +181,15 @@ class Fitter_AE:
             collate_fn (callable, optional): Merges a list of samples to form a mini-batch. Defaults to None.
             shuffle (bool, optional): Set to True to have the data reshuffled at every epoch. Defaults to False.
         '''
-        batch_size = kwargs.get('batch_size', 32)
-        sampler = kwargs.get('sampler', None)
+        batch_size = kwargs.get('batch_size', None)
         collate_fn = kwargs.get('collate_fn', None)
         shuffle = kwargs.get('shuffle', False)
         
         # builds the dataloader
-        if sampler is None: 
+        if self.dataloader_sampler is None: 
             self._dataloader = DataLoader(self.dset, batch_size=batch_size, shuffle=shuffle)
         else:
-            self._dataloader = DataLoader(self.dset, batch_size=batch_size, sampler=sampler, collate_fn=collate_fn, shuffle=shuffle)
+            self._dataloader = DataLoader(self.dset, batch_size=batch_size, sampler=self.dataloader_sampler, collate_fn=collate_fn, shuffle=shuffle)
 
         
     @property
@@ -211,7 +215,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             
     
-    def train(self, seed=42, epochs=100, binning=True, weight_by_distance=True):
+    def train(self, seed=42, epochs=100, binning=True, weight_by_distance=False):
         """Train the model.
 
         Args:
@@ -222,61 +226,40 @@ class Fitter_AE:
         """
         today = date.today()
         save_date=today.strftime('(%Y-%m-%d)')
-        make_folder(self.folder)
+        make_folder(self.checkpoint_folder)
 
         # set seed
         torch.manual_seed(seed)
-
+        
+        if binning:
+            self.configure_dataloader(collate_fn=self.dataloader_sampler.custom_collate_fn)
+        
         # training loop
         for epoch in range(self.start_epoch, epochs):
-            fill_embeddings = False
+            fill_embeddings = False # TODO: fill embeddings during training
 
             loss_dict = self.loss_function( self.dataloader,
                                             binning=binning,
                                             weight_by_distance=weight_by_distance, )
+            
             # divide by batches inplace
-            loss_dict.update( (k,v/len(self.DataLoader_)) for k,v in loss_dict.items())
+            loss_dict.update( (k,v/len(self.dataloader)) for k,v in loss_dict.items())
             
             print(
-                f'Epoch: {epoch:03d}/{N_EPOCHS:03d} | Train Loss: {loss_dict["train_loss"]:.4f}')
+                f'Epoch: {epoch:03d}/{epochs:03d} | Train Loss: {loss_dict["train_loss"]:.4f}')
             print('.............................')
 
           #  schedular.step()
+          # TODO: add regularization losses
+          # TODO: add embedding saver
+          # TODO: add lr scheduler
             lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
-            self.checkpoint = self.folder + f'/{save_date}_' +\
-                f'epoch:{epoch:04d}_l1coef:{coef_1:.4f}'+'_lr:'+lr_ +\
-                f'_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
-            if epoch % save_model_every == 0:
-                self.save_checkpoint(epoch,
-                                    loss_dict=loss_dict,
-                                    coef_1=coef_1, 
-                                    coef_2=coef_2,
-                                    coef_3=coef_3,
-                                    coef_4=coef_4,
-                                    ln_parm=ln_parm)
-
-            if save_emb_every is not None and epoch % save_emb_every == 0: # tell loss function to give embedding
-                h = self.embedding.file
-                check = self.checkpoint.split('/')[-1][:-4]
-                h[f'embedding_{check}'] = h[f'embedding_temp']
-                h[f'scaleshear_{check}'] = h[f'scaleshear_temp']
-                h[f'rotation_{check}'] = h[f'rotation_temp'] 
-                h[f'translation_{check}'] = h[f'translation_temp']
-                self.embedding = h[f'embedding_{check}']
-                self.scale_shear = h[f'scaleshear_{check}']           
-                self.rotation = h[f'rotation_{check}']         
-                self.translation = h[f'translation_{check}']
-                del h[f'embedding_temp']         
-                del h[f'scaleshear_temp']          
-                del h[f'rotation_temp']          
-                del h[f'translation_temp']
-                        
-        if scheduler is not None:
-            scheduler.step()
+            self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
+            self.save_checkpoint(epoch, loss_dict=loss_dict,)
 
     def save_checkpoint(self,epoch,loss_dict,**kwargs):
         checkpoint = {
-            "Fitter": self.Fitter.state_dict(),
+            "encoder": self.encoder.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             "epoch": epoch,
             'loss_dict': loss_dict,
@@ -303,22 +286,21 @@ class Fitter_AE:
         if not weight_by_distance:
             x = torch.stack([x_.mean(dim=0) for x_ in x])
             predicted_x = torch.stack([x_.mean(dim=0) for x_ in predicted_x])
-            return x, predicted_x
+            return x.squeeze(), predicted_x.squeeze()
         
         # Weight by distance logic
         idx = torch.split(idx, self.dataloader_sampler.num_neighbors)
         weight_list = []
         
         for i_, sample_group in enumerate(idx):
-            p_ind, shp = self.dataloader_sampler._which_particle_shape(sample_group[0])
-            coords = [(int((ind - p_ind) % shp[1]), int((ind - p_ind) / shp[0])) for ind in sample_group]
+            coords = [(int(ind % self.dset.shape[1]), int(ind / self.dset.shape[0])) for ind in sample_group]
             weights = torch.tensor([1] + [1 / (1 + ((coords[0][0]-coord[0])**2 + (coords[0][1]-coord[1])**2)**0.5) 
                                         for coord in coords[1:]], device=self.device)
             
             x[i_] = x[i_] * weights.unsqueeze(-1).unsqueeze(-1)
             predicted_x[i_] = predicted_x[i_] * weights.unsqueeze(-1).unsqueeze(-1)
             weight_list.append(weights)
-        
+        # TODO: check if weights correct, fix x shape
         weight_sums = torch.stack([w.sum(dim=0) for w in weight_list]).unsqueeze(-1).unsqueeze(-1)
         x = torch.stack([x_.sum(dim=0) for x_ in x]) / weight_sums
         predicted_x = torch.stack([x_.sum(dim=0) for x_ in predicted_x]) / weight_sums
@@ -386,7 +368,7 @@ class Fitter_AE:
         Returns:
             dict: Dictionary containing different loss components and total loss
         """
-        self.Fitter.train()
+        self.encoder.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
                                'sparse_max_loss': 0, 'l2_batchwise_loss': 0}
@@ -399,9 +381,9 @@ class Fitter_AE:
             
             # Forward pass
             if beta is None:
-                embedding, predicted_x = self.Fitter(x)
+                predicted_x, embedding = self.encoder(x)
             else:
-                embedding, sd, mn, predicted_x = self.Fitter(x)
+                predicted_x, embedding, sd, mn = self.encoder(x, beta)
             
             # Process binning if needed
             if binning:
