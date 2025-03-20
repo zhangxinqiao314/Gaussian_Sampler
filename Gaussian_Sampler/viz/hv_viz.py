@@ -81,7 +81,7 @@ class Fake_PV_viz:
         self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
                                                      checked=self.batch_checkboxes))
                                                     #  trigger=self.button_stream.param.button))
-        self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, 
+        self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, i=self.i_slider,
                                                      checked=self.batch_checkboxes))
                                                     #  trigger=self.button_stream.param.button) )
         
@@ -103,14 +103,14 @@ class Fake_PV_viz:
     @lru_cache(maxsize=10)
     def select_datacube(self,i):
         self.dset.noise_ = self.dset.h5_keys()[i]
-        self.dset.scale = False
+        # self.dset.scale = False
         return self.dset[:][1] # 100, 100, 500
         
-    @lru_cache(maxsize=10)
-    def select_datacube_scaled(self,i):
-        self.dset.noise_ = self.dset.h5_keys()[i]
-        self.dset.scale = True
-        return self.dset[:][1] # 100, 100, 500
+    # @lru_cache(maxsize=10)
+    # def select_datacube_scaled(self,i):
+    #     self.dset.noise_ = self.dset.h5_keys()[i]
+    #     self.dset.scale = True
+    #     return self.dset[:][1] # 100, 100, 500
             
     # @lru_cache(maxsize=10)
     # def select_embedding(i,sampler): # TODO: fix
@@ -179,7 +179,7 @@ class Fake_PV_viz:
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(width=350, height=300,
-                                ylim=(0, datacube.max()), xlim=(0, 500),
+                                ylim=(0, datacube.max()), xlim=(0, self.dset.spec_len),
                                 axiswise=True, shared_axes=False)
     
     def plot_fit_spectrum(self, i, x, y, sampler, noise):
@@ -188,7 +188,7 @@ class Fake_PV_viz:
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(width=350, height=300,
-                            ylim=(0, datacube.max()), xlim=(0, 500),
+                            ylim=(0, datacube.max()), xlim=(0, self.dset.spec_len),
                                         axiswise=True, shared_axes=False)
 
     def show_dot(self, x, y): return hv.Scatter([(x, y)]).opts( color='red', size=5, marker='o',
@@ -209,13 +209,15 @@ class Fake_PV_viz:
 
     def split_list(self,): # trigger if dset changes
         return [self.batch_inds[i:i + self.sampler.num_neighbors] for i in range(0, len(self.batch_inds), self.sampler.num_neighbors)]
+    
     def get_points_idx(self): 
         clumps = self.split_list()
         return [[ (int(ind / self.dset.shape[0]),ind % self.dset.shape[0]
                     ) for ind in clump
                 ] for clump in clumps ]
-    def get_points_data(self):
-        dset = self.select_datacube(self.i_slider.value)
+    
+    def get_points_data(self,i):
+        dset = self.select_datacube(i)
         clumps = self.split_list()
         return [ np.asarray([dset[ind] for ind in clump],dtype=np.float32
                          ) for clump in clumps ]
@@ -233,17 +235,17 @@ class Fake_PV_viz:
             scatter_list.append(point)
         return hv.Overlay(scatter_list).opts(shared_axes=True, axiswise=True)
     
-    def plot_batch_spectrum(self, checked):
-        data = self.get_points_data()
+    def plot_batch_spectrum(self, checked, i):
+        data = self.get_points_data(i)
         curves_list = []
         for d,dat in enumerate(data):
             if d in checked: curve = hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
                                             color=self.colors[d], alpha=1,
-                                            ylim=(0, self.dset.maxes.max()), xlim=(0, 500),
+                                            ylim=(0, self.dset.maxes.max()), xlim=(0, self.dset.spec_len),
                                             axiswise=True, shared_axes=False, line_width=1)
             else: curve = hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
                                             color=self.colors[d], alpha=0.1,
-                                            ylim=(0, self.dset.maxes.max()), xlim=(0, 500),
+                                            ylim=(0, self.dset.maxes.max()), xlim=(0, self.dset.spec_len),
                                             axiswise=True, shared_axes=False, line_width=1)
             curves_list.append( curve )
             
