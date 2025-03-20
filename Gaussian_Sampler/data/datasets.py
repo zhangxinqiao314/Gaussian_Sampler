@@ -24,6 +24,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
+        self.noise_levels = list(self.h5_keys())
         self.noise_ = self.h5_keys()[0]
         
     @staticmethod
@@ -64,7 +65,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             try: data = np.array([f[self.noise_][i] for i in idx])
             except: data = f[self.noise_][idx]
             
-            if self.scale: self.scale_data(data)
+            if self.scale: data = self.scale_data(data)
                 
             return idx, data
     
