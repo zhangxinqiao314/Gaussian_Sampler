@@ -11,6 +11,8 @@ import h5py
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
 
+from ..models.pv_fitter import Fitter_AE
+import os
 class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False):
         '''dset is x*y,spec_len'''
@@ -26,7 +28,12 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
         self.noise_levels = list(self.h5_keys())
-        self.noise_ = self.h5_keys()[0]
+        self._noise = self.noise_levels[0]
+        
+    @property
+    def noise_(self): return self._noise
+    @noise_.setter
+    def noise_(self, i): self._noise = self.noise_levels[i]
         
     @staticmethod
     def noise(i): 
@@ -100,23 +107,24 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                                                        noise = noise_)
                 f.flush()
 
-class Fake_PV_Embeddings(torch.utils.data.Dataset):
-    def __init__(self, dset, model, checkpoint_path, **kwargs):
-        self.dset = dset
-        self.model = model
-        self.checkpoint_path = checkpoint_path
-        self.model.load_weights(self.checkpoint_path)
-        self.h5_name = self.model.checkpoint_folder + '/embeddings.h5'
+class Fake_PV_Embeddings(Fake_PV_Dataset, Fitter_AE):
+    def __init__(self, dset, model, checkpoints_folder, **kwargs):        
+        self.__dict__.update(dset.__dict__)
+        self.__dict__.update(model.__dict__)
         self.device = self.model.encoder.device
-        self.noise_levels = list(self.dset.h5_keys())
-        self._noise = self.dset.h5_keys()[0]
+        self.h5_name = os.path.split(self.h5_name)[0] + 'embeddings.h5'
+        self.noise_ = 0
         
-    # @property
-    # def noise_(self): return self._noise
-    # @noise_.setter
-    # def noise_(self, i): 
-    #     self._noise = self.dset.h5_keys()[i]
-    #     self.model.load_weights(self.checkpoint_path)
+    @property
+    def noise_(self): return self._noise
+    @noise_.setter
+    def noise_(self, i): 
+        self._noise = self.noise_levels[i]
+        self.dset.noise_ = self._noise 
+        self.model.load_weights(self.checkpoint_path)
+        
+    
+        
     
     def open_h5(self): return h5py.File(self.h5_name, 'a')
     
