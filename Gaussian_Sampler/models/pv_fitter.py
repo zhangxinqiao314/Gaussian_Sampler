@@ -74,7 +74,6 @@ def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', ret
     return pseudovoigt.to(torch.float32)
 
 
-
 class Fitter_AE:
     """Autoencoder-based fitter for spectroscopic data.
 
@@ -134,13 +133,16 @@ class Fitter_AE:
             ):
         self.dset = dset
         self.num_fits = num_fits
+        self.num_params = num_params
         self.limits = limits
         self.device = device
         self.learning_rate = learning_rate
         self.collate_fn = collate_fn
+        self.encoder_params = encoder_params
         self.encoder = encoder(function = function,
                                 x_data = dset,
                                 input_channels = input_channels,
+                                num_fits = num_fits,
                                 num_params = num_params,
                                 device=device,
                                 **encoder_params
@@ -215,7 +217,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             
     
-    def train(self, seed=42, epochs=100, binning=True, weight_by_distance=False):
+    def train(self, seed=42, epochs=100, binning=True, weight_by_distance=False, save_every=1):
         """Train the model.
 
         Args:
@@ -227,6 +229,7 @@ class Fitter_AE:
         today = date.today()
         save_date=today.strftime('(%Y-%m-%d)')
         make_folder(self.checkpoint_folder)
+        print(os.path.abspath(self.checkpoint_folder))
 
         # set seed
         torch.manual_seed(seed)
@@ -255,18 +258,46 @@ class Fitter_AE:
           # TODO: add lr scheduler
             lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
             self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
-            self.save_checkpoint(epoch, loss_dict=loss_dict,)
+            if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,)
 
-    def save_checkpoint(self,epoch,loss_dict,**kwargs):
+    def save_checkpoint(self,epoch,loss_dict,**kwargs): # TODO: needs to save sampler
         checkpoint = {
-            "encoder": self.encoder.state_dict(),
+            'encoder': self.encoder.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            "epoch": epoch,
+            'epoch': epoch,
             'loss_dict': loss_dict,
             'loss_params': kwargs,
+            'sampler': self.dataloader_sampler.sampler,
         }
         torch.save(checkpoint, self.checkpoint)
 
+    def load_weights(self, path_checkpoint):
+        """loads the weights from a checkpoint
+
+        Args:
+            path_checkpoint (str): path where checkpoints are saved 
+        """
+        self.checkpoint = path_checkpoint
+        checkpoint = torch.load(path_checkpoint, weights_only=False)
+        self.encoder.load_state_dict(checkpoint['encoder'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.start_epoch = checkpoint['epoch']
+        self.dataloader_sampler.sampler = checkpoint['sampler']
+        
+        try: self.loss_dict = checkpoint['loss_dict']
+        except: self.loss_dict = None
+        
+        try: self.loss_params = checkpoint['loss_params']
+        except: self.loss_params = None
+
+    def get_embedding(self, dset, batch_size=100):
+        self.configure_dataloader_sampler(sampler=None)
+        self.configure_dataloader(batch_size=batch_size)
+        
+        for i, (idx, x) in enumerate(tqdm(self.dataloader, leave=True, total=len(self.dataloader))):
+            fits, params = self.encoder(x)
+            
+        return 
     # Loss stuff
     def _initialize_loss_components(self, train_iterator, coef1, coef2, coef3, coef4):
         """Initialize loss components and their coefficients"""
@@ -390,7 +421,7 @@ class Fitter_AE:
                 x, predicted_x = self._process_batch_binning(x, predicted_x, idx, weight_by_distance)
             
             # Compute losses
-            loss, batch_loss_dict = self._compute_losses(embedding, x, predicted_x, loss_components, coef5)
+            loss, batch_loss_dict = self._compute_losses(embedding, x, predicted_x.sum(axis=1), loss_components, coef5)
             
             # Update accumulated losses
             for k in accumulated_loss_dict:
