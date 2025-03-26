@@ -282,7 +282,8 @@ class Fitter_AE:
         self.encoder.load_state_dict(checkpoint['encoder'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.start_epoch = checkpoint['epoch']
-        self.dataloader_sampler.sampler = checkpoint['sampler']
+        try: self.configure_dataloader_sampler(sampler=checkpoint['sampler'])
+        except: self.configure_dataloader_sampler(sampler=None)
         
         try: self.loss_dict = checkpoint['loss_dict']
         except: self.loss_dict = None

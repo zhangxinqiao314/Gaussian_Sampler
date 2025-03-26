@@ -110,6 +110,7 @@ class Fake_PV_Embeddings(torch.utils.data.Dataset):
         self.device = self.model.encoder.device
         self.noise_levels = list(self.dset.h5_keys())
         self._noise = self.dset.h5_keys()[0]
+        self.which = None
         
     # @property
     # def noise_(self): return self._noise
@@ -122,17 +123,22 @@ class Fake_PV_Embeddings(torch.utils.data.Dataset):
     
     def h5_keys(self): return list(self.open_h5().keys())
     
-    def write_embeddings(self, batch_size=100):
+    def write_embeddings(self, batch_size=100, overwrite=False):
         with self.open_h5() as f:
+            if overwrite:
+                try: del f[f'{self.model.check}_fits']
+                except: pass
+                try: del f[f'{self.model.check}_params']
+                except: pass
             try: fits = f[f'{self.model.check}_fits']
             except: fits = f.create_dataset(f'{self.model.check}_fits', 
-                                            shape=(self.dset.shape[0], 
+                                            shape=(len(self.dset), 
                                                 self.model.num_fits, 
                                                 self.dset.shape[-1]), 
                                             dtype=np.float32)
             try: params = f[f'{self.model.check}_params']
             except: params = f.create_dataset(f'{self.model.check}_params', 
-                                            shape=(self.dset.shape[0], 
+                                            shape=(len(self.dset), 
                                                     self.model.num_fits, 
                                                     self.model.num_params), 
                                             dtype=np.float32)
@@ -153,9 +159,7 @@ class Fake_PV_Embeddings(torch.utils.data.Dataset):
                     
     def __getitem__(self, idx):
         with self.open_h5() as f:
-            fits = f[f'{self.model.check}_fits'][idx]
-            params = f[f'{self.model.check}_params'][idx]
-            return idx, fits, params
+           return f[f'{self.model.check}_fits'][idx], f[f'{self.model.check}_params'][idx]
         
     def __len__(self):
         with self.open_h5() as f:
