@@ -13,7 +13,6 @@ class Fake_PV_viz:
     def __init__(self, dset, sampler=None):
         self.dset = dset
         self.dset_list = dset.h5_keys()
-        self.parameters_list = ['Amplitude', 'Center', 'Width', 'Nu']
         self.sampler = sampler
         self.colors = ['green','orange','yellow','brown','pink','gray','magenta','cyan','purple','lime','teal','maroon','indigo','gold']
 
@@ -69,12 +68,6 @@ class Fake_PV_viz:
         self.dset.noise_ = self.dset.h5_keys()[i]
         # self.dset.scale = False
         return self.dset[:][1] # 100, 100, 500
-        
-    # @lru_cache(maxsize=10)
-    # def select_datacube_scaled(self,i):
-    #     self.dset.noise_ = self.dset.h5_keys()[i]
-    #     self.dset.scale = True
-    #     return self.dset[:][1] # 100, 100, 500
     
     ############################################ input data helpers
     
@@ -189,24 +182,31 @@ class Fake_PV_viz:
 class Fake_PV_viz_embeddings(Fake_PV_viz):
     def __init__(self, model, emb, dset, **kwargs):
         super().__init__(dset, model._dataloader_sampler)
+        self.parameters_list = ['Amplitude', 'Center', 'Width', 'Nu']
         self.model = model
         self.emb = emb
+        
+        # self.i_slider = pn.widgets.IntSlider(name='i', value=self.dset.h5_keys().index(self.emb.checkpoint_path.split('/')[-2]), start=0, end=len(self.dset.h5_keys())-1)
         
         # Create dynamic maps for embedding and fits
         self.f_slider = pn.widgets.IntSlider(name='f', value=0, start=0, end=self.model.num_fits-1)
 
         
-        self.fit_img_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, 
-                                                  s=self.s_slider, f=self.f_slider))
+        self.fit_img_sum_dmap = hv.DynamicMap(pn.bind(self.plot_fits_sum_img, s=self.s_slider))
+        
+        self.fit_img_dmap = hv.DynamicMap(pn.bind(self.plot_fits_img, s=self.s_slider, f=self.f_slider))
+        
+        self.fit_spec_sum_dmap = hv.DynamicMap(pn.bind(self.plot_fit_sum_spectrum, 
+                                                   x=self.x_slider, y=self.y_slider))
         
         self.fit_spec_dmap = hv.DynamicMap(pn.bind(self.plot_fits_spectrum, 
                                                    x=self.x_slider, y=self.y_slider, f=self.f_slider))
-        self.fit_spec_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_fits_spectrum, 
-                                                   x=self.x_slider, y=self.y_slider, f=self.f_slider))
         
-        self.embedding_dmaps = [hv.DynamicMap(pn.bind(self.plot_params_img, 
-                                                      par=par)
-                                              )*self.dot_dmap for par in range(4)]
+        self.param_dmap_list = []
+        for par in range(self.model.num_params):
+            self.param_dmap_list.append( hv.DynamicMap(pn.bind(self.plot_params_img, 
+                                                      par=par, f=self.f_slider)
+                                              )*self.dot_dmap )
    
     @lru_cache(maxsize=10)
     def select_fits_params(self, which=slice(None)):
@@ -217,28 +217,48 @@ class Fake_PV_viz_embeddings(Fake_PV_viz):
 
 
     #######################################################
+    def plot_fits_sum_img(self, s):
+        fits = self.select_fits_params(which=0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits,-1)
+        data_ = np.flipud(fits[..., s].T)
+        
+        return hv.Image(data_.sum(axis=-1), bounds=(0, 0, data_.shape[0], data_.shape[1]),
+                        kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
+                        vdims=[hv.Dimension('intensity', label='Intensity')],
+                        ).opts(cmap='viridis', colorbar=True, clim=(0, fits.max()),
+                            width=350, height=300, title='Fitted Intensity')
+                        
     def plot_fits_img(self, s, f):
         fits = self.select_fits_params(which=0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits,-1)
-        data_ = np.flipud(fits[:, :, f, s].T)
+        data_ = np.flipud(fits[..., f, s].T)
         
         return hv.Image(data_, bounds=(0, 0, data_.shape[0], data_.shape[1]),
                         kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(cmap='viridis', colorbar=True, clim=(0, fits.max()),
-                            width=350, height=300, title='Fitted Intensity')
+                            width=350, height=300, title=f'Fit {f}')
 
+    #######################################################
+    def plot_fit_sum_spectrum(self, x, y):
+        fits = self.select_fits_params(0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits,-1)
+        return hv.Curve(fits[x, y].sum(axis=0),
+                        kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
+                        vdims=[hv.Dimension('intensity', label='Intensity')],
+                        ).opts(width=350, height=300, color='red',
+                            ylim=(0, fits.max()), xlim=(0, self.dset.spec_len),
+                            axiswise=True, shared_axes=False, title=f'Fitted Spectrum')
+                        
     def plot_fits_spectrum(self, x, y, f):
         fits = self.select_fits_params(0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits)
         return hv.Curve(fits[x, y, f],
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
-                        ).opts(width=350, height=300,
-                            ylim=(0, fits.max()), xlim=(0, self.dset.spec_len),
-                                        axiswise=True, shared_axes=False)
+                        ).opts(width=350, height=300, color='red', line_style='dashed',
+                               ylim=(0,fits.max()), xlim=(0,self.dset.spec_len),
+                            axiswise=True, shared_axes=False, title=f'Fitted Spectrum {f}')
 
     #######################################################
     def plot_params_img(self, par, f):
-        params = self.select_fits_params(1).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits)
+        params = self.select_fits_params(1).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits,-1)
         data_ = np.flipud(params[:, :, f, par].T)
         
         return hv.Image(data_, bounds=(0, 0, data_.shape[0], data_.shape[1]),
@@ -251,17 +271,15 @@ class Fake_PV_viz_embeddings(Fake_PV_viz):
     def layout_fits_params(self): # TODO: fix
     
         return pn.Column(
-            pn.Row(self.i_slider, self.s_slider),
+            pn.Row(self.f_slider, self.s_slider),
             pn.Row(self.x_slider, self.y_slider),
-            pn.Row(self.f_slider),
             
             (self.img_dmap*self.dot_dmap + \
              self.fit_img_dmap*self.dot_dmap + \
-             self.spec_dmap*self.vline_dmap*self.zero_spec_dmap).opts(shared_axes=True, axiswise=True),
+             self.spec_dmap*self.fit_spec_sum_dmap*self.vline_dmap*self.zero_spec_dmap
+             ).opts(shared_axes=True, axiswise=True),
             
-            (self.img_dmap*self.dot_dmap + \
-                self.spec_dmap*self.vline_dmap*self.zero_spec_dmap).opts(shared_axes=True, axiswise=True),
-                        )
+            hv.Layout(self.param_dmap_list).opts(shared_axes=True, axiswise=True) )
     #######################################################
     
     def plot_batch_fits(self, checked): # TODO: fix
