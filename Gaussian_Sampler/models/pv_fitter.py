@@ -21,8 +21,16 @@ from torch.utils.data import DataLoader
 from datetime import date
 from tqdm import tqdm
 
+def pseudovoigt_1D_activations(embedding, limits=[1,1,975]):
+    # TODO: try to have all values in embedding between 0-1
+    A = limits[0] * nn.ReLU()(embedding[..., 0]) # area under curve TODO: best way to scale this?
+    # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
+    x = torch.clamp(limits[1]/2 * nn.Tanh()(embedding[..., 1]) + limits[1]/2, min=1e-3) # mean
+    w = torch.clamp(limits[2]/2 * nn.Tanh()(embedding[..., 2]) + limits[2]/2, min=1e-3) # fwhm
+    nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
+    return torch.stack([A,x,w,nu],axis=2)
 
-def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', return_params=False,spec_len=None):
+def generate_pseudovoigt_1D(embedding, dset, device='cpu',spec_len=None):
     """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
     This function implements the Pseudo-Voigt profile as described in:
@@ -46,13 +54,12 @@ def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', ret
         torch.Tensor: Pseudo-Voigt profiles of shape (batch_size, num_fits, spec_len)
         torch.Tensor: (Optional) Parameters [A, x, w, nu] if return_params=True
     """
-    # TODO: try to have all values in embedding between 0-1
-    A = limits[0] * nn.ReLU()(embedding[..., 0]) # area under curve TODO: best way to scale this?
-    # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
-    x = torch.clamp(limits[1]/2 * nn.Tanh()(embedding[..., 1]) + limits[1]/2, min=1e-3) # mean
-    w = torch.clamp(limits[2]/2 * nn.Tanh()(embedding[..., 2]) + limits[2]/2, min=1e-3) # fwhm
-    nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
-
+    # Unpack embedding tensor along last dimension (shape: [..., 4])
+    A = embedding[..., 0]  # Area
+    x = embedding[..., 1]  # Mean position
+    w = embedding[..., 2]  # FWHM
+    nu = embedding[..., 3] # Lorentzian character fraction
+    
     s = x.shape  # (_, num_fits)    
     if spec_len is not None:
         s = (s[0],-1,spec_len)
@@ -62,15 +69,12 @@ def generate_pseudovoigt_1D(embedding, dset, limits=[1,1,975], device='cpu', ret
     # Gaussian component
     gaussian = A.unsqueeze(-1)*(4*torch.log(torch.tensor(2))/torch.pi)**0.5 / w.unsqueeze(-1) * \
             torch.exp(-4*torch.log(torch.tensor(2)) / w.unsqueeze(-1)**2 * (x_-x.unsqueeze(-1))**2)
-
     # Lorentzian component (simplified version)
     lorentzian = A.unsqueeze(-1)*( 2/torch.pi * w.unsqueeze(-1) / \
                                    (4*(x_-x.unsqueeze(-1))**2 + w.unsqueeze(-1)**2) )
-    
     # Pseudo-Voigt profile
     pseudovoigt = nu.unsqueeze(-1)*lorentzian + (1-nu.unsqueeze(-1))*gaussian #+  Ib.unsqueeze(-1)
 
-    if return_params: return pseudovoigt.to(torch.float32), torch.stack([A,x,w,nu],axis=2)
     return pseudovoigt.to(torch.float32)
 
 
@@ -108,7 +112,6 @@ class Fitter_AE:
                  dset,
                  num_params,
                  num_fits,
-                 limits,
                  input_channels,
                  learning_rate=3e-5,
                  device='cuda:0',
@@ -126,6 +129,9 @@ class Fitter_AE:
                     "hidden_embedding": block_factory(FC_Block)(output_size_list=[16,8,4])
                 },
                 "skip_connections": ["hidden_xfc", "hidden_embedding"] },
+                 final_activation_function = pseudovoigt_1D_activations,
+                 final_activation_kwargs = {},
+              
                 checkpoint_folder='./checkpoints',
                 sampler=None,
                 sampler_params={},
@@ -134,7 +140,6 @@ class Fitter_AE:
         self.dset = dset
         self.num_fits = num_fits
         self.num_params = num_params
-        self.limits = limits
         self.device = device
         self.learning_rate = learning_rate
         self.collate_fn = collate_fn
@@ -267,7 +272,7 @@ class Fitter_AE:
             'epoch': epoch,
             'loss_dict': loss_dict,
             'loss_params': kwargs,
-            'sampler': self.dataloader_sampler.sampler,
+            'sampler': self.dataloader_sampler,
         }
         torch.save(checkpoint, self.checkpoint)
 

@@ -11,6 +11,26 @@ import h5py
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
 
+
+def draw_m_in_array(size_=100):
+    arr_ = np.zeros((size_, size_), dtype=int)
+    w=size_//10
+    size=size_//2
+    arr = np.zeros((size, size), dtype=int)
+
+    for i in range(size):
+        # Left vertical line
+        arr[i, 0:w] = 1
+        # Right vertical line
+        arr[i, size-w:size] = 1
+        # Diagonal from left to middle
+        if w <= i < size // 2:
+            arr[i-w:i+w,i] = 1
+            # Diagonal from right to middle
+            arr[i-w:i+w, size-(i+1)] = 1
+        arr_[size_//4:size_//4+size,size_//4:size_ //4+size] = arr
+    return arr_
+
 class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False):
         '''dset is x*y,spec_len'''
@@ -20,6 +40,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.shape = shape
         self.spec_len = self.shape[-1]
         self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
+        # self.mask = draw_m_in_array(self.shape[0])
         if overwrite: self.generate_pv_data()
         
         self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
@@ -109,7 +130,7 @@ class Fake_PV_Embeddings(torch.utils.data.Dataset):
         self.h5_name = self.model.checkpoint_folder + '/embeddings.h5'
         self.device = self.model.encoder.device
         self.noise_levels = list(self.dset.h5_keys())
-        self._noise = self.dset.h5_keys()[0]
+        self._noise = self.checkpoint_path.split('/')[-2]
         self.which = None
         
     # @property

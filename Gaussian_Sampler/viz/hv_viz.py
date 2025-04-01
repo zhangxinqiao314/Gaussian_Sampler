@@ -186,11 +186,10 @@ class Fake_PV_viz_embeddings(Fake_PV_viz):
         self.model = model
         self.emb = emb
         
-        # self.i_slider = pn.widgets.IntSlider(name='i', value=self.dset.h5_keys().index(self.emb.checkpoint_path.split('/')[-2]), start=0, end=len(self.dset.h5_keys())-1)
         
         # Create dynamic maps for embedding and fits
-        self.f_slider = pn.widgets.IntSlider(name='f', value=0, start=0, end=self.model.num_fits-1)
-
+        self.f_slider = pn.widgets.IntSlider(name='Fit channel', value=0, start=0, end=self.model.num_fits-1)
+        self.i_slider.value = self.dset.h5_keys().index(self.emb._noise)
         
         self.fit_img_sum_dmap = hv.DynamicMap(pn.bind(self.plot_fits_sum_img, s=self.s_slider))
         
@@ -276,7 +275,7 @@ class Fake_PV_viz_embeddings(Fake_PV_viz):
             
             (self.img_dmap*self.dot_dmap + \
              self.fit_img_dmap*self.dot_dmap + \
-             self.spec_dmap*self.fit_spec_sum_dmap*self.vline_dmap*self.zero_spec_dmap
+             self.spec_dmap*self.vline_dmap*self.zero_spec_dmap*self.fit_spec_sum_dmap
              ).opts(shared_axes=True, axiswise=True),
             
             hv.Layout(self.param_dmap_list).opts(shared_axes=True, axiswise=True) )
