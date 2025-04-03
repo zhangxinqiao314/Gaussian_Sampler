@@ -1,7 +1,7 @@
+from typing import Iterable
 import numpy as np
 import torch
 # from m3_learning.nn.Regularization.Regularizers import ContrastiveLoss, DivergenceLoss
-from tqdm import tqdm
 import torch.nn.functional as F
 from torch.autograd import Variable
 import dask.array as da        
@@ -31,8 +31,11 @@ def draw_m_in_array(size_=100):
         arr_[size_//4:size_//4+size,size_//4:size_ //4+size] = arr
     return arr_
 
+
 class Fake_PV_Dataset(torch.utils.data.Dataset):
-    def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False):
+    def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False, 
+                 scaler=Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())]),
+                 scaling_kernel_size = 1):
         '''dset is x*y,spec_len'''
         self.save_folder = save_folder
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
@@ -47,7 +50,17 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
         self.noise_levels = list(self.h5_keys())
-        self.noise_ = self.h5_keys()[0]
+        self._noise = self.h5_keys()[0]
+        self.scaler = scaler
+        self.scaling_kernel_size = scaling_kernel_size
+        if scaled: self.fit_scalers()
+        
+    @property
+    def noise_(self): return self._noise
+    @noise_.setter
+    def noise_(self, i): 
+        self._noise = self.h5_keys()[i] if isinstance(i, int) else i
+        self.fit_scalers()
         
     @staticmethod
     def noise(i): 
@@ -66,12 +79,55 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         noisy = y + noise
         noisy[noisy<0] = 0
         return noisy
-
-    def scale_data(self, unscaled_data):
-        self.scaler = Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())])
-        scaled_data = self.scaler.fit_transform(unscaled_data.reshape(-1, unscaled_data.shape[-1])).reshape(unscaled_data.shape)
-        return scaled_data
     
+    def fit_scalers(self):
+        ''' scales pixel of data using a kernel of size kernel_size
+        args:
+            kernel_size: size of the kernel to use for scaling
+            scalers: list of scalers to use for scaling
+        returns:
+            data: scaled data
+        '''
+        if self.scaling_kernel_size%2 == 0: 
+            raise ValueError('kernel_size must be odd')
+        if self.scaling_kernel_size > self.shape[0] or self.scaling_kernel_size > self.shape[1]: 
+            raise ValueError('kernel_size must be less than the shape of the data')
+        
+        self.kernel_scalers = []
+        with self.open_h5() as f:
+            if self.scaling_kernel_size==1:
+                self.kernel_scalers = []
+                for dat in tqdm(f[self.noise_], desc="Fitting scalers"):
+                    self.kernel_scalers.append( self.scaler.fit(dat.reshape(-1, 1)) )
+            else:
+                for idx in tqdm(range(self.shape[0]*self.shape[1]), desc='Fitting scalers'):
+                    x_ = idx//self.shape[1]
+                    y_ = idx%self.shape[1]
+                    
+                    # Calculate valid kernel boundaries
+                    x_start = max(0, x_-self.scaling_kernel_size//2)
+                    x_end = min(self.shape[1], x_+self.scaling_kernel_size//2+1)
+                    y_start = max(0, y_-self.scaling_kernel_size//2)
+                    y_end = min(self.shape[0], y_+self.scaling_kernel_size//2+1)
+                    
+                    # Calculate flattened indices for the kernel region
+                    points = [y*self.shape[1]+x for y in range(y_start,y_end) for x in range(x_start, x_end)]
+                    data = f[self.noise_][points]
+                    self.kernel_scalers.append(self.scaler.fit(data.reshape(-1, 1)))
+ 
+    def scale_data(self, data, idx):
+        if isinstance(idx, int):
+            scaled_data = self.kernel_scalers[idx].transform(data.reshape(-1, 1)).reshape(data.shape)
+        elif isinstance(idx, slice):
+            scalers = [self.kernel_scalers[i] for i in range(*idx.indices(len(self.kernel_scalers)))]
+            scaled_data = np.array([scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
+                                    for scaler,dat in zip(scalers, data)])
+        else:
+            scalers = [self.kernel_scalers[i] for i in idx]
+            scaled_data = np.array([scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
+                                    for scaler,dat in zip(scalers, data)])
+        return scaled_data
+       
     def unscale_data(self, unscaled_data, scaled_data):
         self.scaler.fit(unscaled_data.reshape(-1, unscaled_data.shape[-1]))
         unscaled_data = self.scaler.inverse_transform(scaled_data.reshape(-1, scaled_data.shape[-1])).reshape(scaled_data.shape)
@@ -87,8 +143,8 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             try: data = np.array([f[self.noise_][i] for i in idx])
             except: data = f[self.noise_][idx]
             
-            if self.scale: data = self.scale_data(data)
-                
+            if self.scale: data = self.scale_data(data, idx)
+            
             return idx, data
     
     
@@ -146,37 +202,60 @@ class Fake_PV_Embeddings(torch.utils.data.Dataset):
     
     def write_embeddings(self, batch_size=100, overwrite=False):
         with self.open_h5() as f:
+            if not overwrite:
+                try: 
+                    fits = f[f'{self.model.check}_fits']
+                    return
+                except: 
+                    fits = f.create_dataset(f'{self.model.check}_fits', 
+                                                shape=(len(self.dset), 
+                                                        self.model.num_fits, 
+                                                        self.dset.shape[-1]), 
+                                                dtype=np.float32)
+                    overwrite = True
+                try: 
+                    params = f[f'{self.model.check}_params']
+                    return
+                except: 
+                    params = f.create_dataset(f'{self.model.check}_params', 
+                                                shape=(len(self.dset), 
+                                                        self.model.num_fits, 
+                                                        self.model.num_params), 
+                                                dtype=np.float32)
+                    overwrite = True
+        
             if overwrite:
-                try: del f[f'{self.model.check}_fits']
+                try: 
+                    del f[f'{self.model.check}_fits']
+                    fits = f.create_dataset(f'{self.model.check}_fits', 
+                                                shape=(len(self.dset), 
+                                                        self.model.num_fits, 
+                                                        self.dset.shape[-1]), 
+                                                dtype=np.float32)
                 except: pass
-                try: del f[f'{self.model.check}_params']
+                try: 
+                    del f[f'{self.model.check}_params']
+                    params = f.create_dataset(f'{self.model.check}_params', 
+                                                shape=(len(self.dset), 
+                                                        self.model.num_fits, 
+                                                        self.model.num_params), 
+                                                dtype=np.float32)
                 except: pass
-            try: fits = f[f'{self.model.check}_fits']
-            except: fits = f.create_dataset(f'{self.model.check}_fits', 
-                                            shape=(len(self.dset), 
-                                                self.model.num_fits, 
-                                                self.dset.shape[-1]), 
-                                            dtype=np.float32)
-            try: params = f[f'{self.model.check}_params']
-            except: params = f.create_dataset(f'{self.model.check}_params', 
-                                            shape=(len(self.dset), 
-                                                    self.model.num_fits, 
-                                                    self.model.num_params), 
-                                            dtype=np.float32)
-
-            self.model.configure_dataloader_sampler(sampler=None)
-            self.model.configure_dataloader(batch_size=batch_size)
             
-            for i, (idx, x) in enumerate(tqdm(self.model.dataloader, leave=True, total=len(self.model.dataloader))):
-                with torch.no_grad():
-                    value = x
-                    batch_size = x.shape[0]
-                    test_value = Variable(value)
-                    test_value = test_value.float().to(self.device)
-                    fits_, params_ = self.model.encoder(test_value)
-                    
-                    fits[i*batch_size:(i+1)*batch_size] = fits_.cpu().numpy()
-                    params[i*batch_size:(i+1)*batch_size] = params_.cpu().numpy()
+
+                self.model.configure_dataloader_sampler(sampler=None)
+                self.model.configure_dataloader(batch_size=batch_size)
+                
+                for i, (idx, x) in enumerate(tqdm(self.model.dataloader, leave=True, total=len(self.model.dataloader), desc="Writing embeddings")):
+                    with torch.no_grad():
+                        value = x
+                        batch_size = x.shape[0]
+                        test_value = Variable(value)
+                        test_value = test_value.float().to(self.device)
+                        fits_, params_ = self.model.encoder(test_value)
+                        
+                        fits[i*batch_size:(i+1)*batch_size] = fits_.cpu().numpy()
+                        params[i*batch_size:(i+1)*batch_size] = params_.cpu().numpy()
                     
     def __getitem__(self, idx):
         with self.open_h5() as f:
