@@ -21,9 +21,20 @@ from torch.utils.data import DataLoader
 from datetime import date
 from tqdm import tqdm
 
-def pseudovoigt_1D_fitters(embedding, limits=[1,1,975]):
+#TODO: make classes out of functions. 
+class pseudovoigt_1D_fitters(limits=[1,1,975]):
+    def __init__(self, limits=[1,1,975]):
+        self.limits = limits
     
-def pseudovoigt_1D_activations(embedding, limits=[1,1,975]):
+    def compute(self, embedding):
+        A = self.limits[0] * embedding[..., 0] # area under curve TODO: best way to scale this?
+        # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
+        x = self.limits[1] * embedding[..., 1] # mean
+        w = self.limits[2] * embedding[..., 2] # fwhm
+        nu = embedding[..., 3] # fraction voight character
+        return torch.stack([A,x,w,nu],axis=2)
+
+def pseudovoigt_1D_activations(embedding):
     '''This function takes an embedding and scales it to the limits of the parameters
     
     This function implements the Pseudo-Voigt profile as described in:
@@ -37,11 +48,10 @@ def pseudovoigt_1D_activations(embedding, limits=[1,1,975]):
             - nu: Lorentzian character fraction (index 3)
         limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
     '''
-    # TODO: try to have all values in embedding between 0-1
-    A = limits[0] * nn.ReLU()(embedding[..., 0]) # area under curve TODO: best way to scale this?
+    A = nn.ReLU()(embedding[..., 0]) # area under curve 
     # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
-    x = torch.clamp(limits[1]/2 * nn.Tanh()(embedding[..., 1]) + limits[1]/2, min=1e-3) # mean
-    w = torch.clamp(limits[2]/2 * nn.Tanh()(embedding[..., 2]) + limits[2]/2, min=1e-3) # fwhm
+    x = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-3) # mean
+    w = torch.clamp(nn.Tanh()(embedding[..., 2])/2 + 0.5, min=1e-3) # fwhm
     nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
     return torch.stack([A,x,w,nu],axis=2)
 
