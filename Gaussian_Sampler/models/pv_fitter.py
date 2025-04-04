@@ -21,7 +21,22 @@ from torch.utils.data import DataLoader
 from datetime import date
 from tqdm import tqdm
 
+def pseudovoigt_1D_fitters(embedding, limits=[1,1,975]):
+    
 def pseudovoigt_1D_activations(embedding, limits=[1,1,975]):
+    '''This function takes an embedding and scales it to the limits of the parameters
+    
+    This function implements the Pseudo-Voigt profile as described in:
+    https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
+    
+    Args:
+        embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
+            - A: Area under curve (index 0)
+            - x: Mean position (index 1)
+            - w: Full Width at Half Maximum (FWHM) (index 2)
+            - nu: Lorentzian character fraction (index 3)
+        limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
+    '''
     # TODO: try to have all values in embedding between 0-1
     A = limits[0] * nn.ReLU()(embedding[..., 0]) # area under curve TODO: best way to scale this?
     # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
@@ -30,7 +45,7 @@ def pseudovoigt_1D_activations(embedding, limits=[1,1,975]):
     nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
     return torch.stack([A,x,w,nu],axis=2)
 
-def generate_pseudovoigt_1D(embedding, dset, device='cpu',spec_len=None):
+def generate_pseudovoigt_1D(embedding, dset, spec_len=None):
     """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
     This function implements the Pseudo-Voigt profile as described in:
@@ -46,14 +61,13 @@ def generate_pseudovoigt_1D(embedding, dset, device='cpu',spec_len=None):
             - w: Full Width at Half Maximum (FWHM) (index 2)
             - nu: Lorentzian character fraction (index 3)
         dset: Dataset containing spectral information with attribute spec_len
-        limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
-        device (str): Device to run computations on. Defaults to 'cpu'
         return_params (bool): If True, returns both profile and parameters. Defaults to False
 
     Returns:
         torch.Tensor: Pseudo-Voigt profiles of shape (batch_size, num_fits, spec_len)
         torch.Tensor: (Optional) Parameters [A, x, w, nu] if return_params=True
     """
+    device = embedding.device
     # Unpack embedding tensor along last dimension (shape: [..., 4])
     A = embedding[..., 0]  # Area
     x = embedding[..., 1]  # Mean position
@@ -175,8 +189,10 @@ class Fitter_AE:
         # builds the dataloader
         if sampler is None: 
             self._dataloader_sampler = None
+            self.binning = False
         else:
             self._dataloader_sampler = Gaussian_Sampler(self.dset, orig_shape, batch_size, gaussian_std, num_neighbors)
+            self.binning = True
     
     @property
     def dataloader(self): return self._dataloader
@@ -195,9 +211,10 @@ class Fitter_AE:
         # builds the dataloader
         if self.dataloader_sampler is None: 
             self._dataloader = DataLoader(self.dset, batch_size=batch_size, shuffle=shuffle)
+            self.binning = False
         else:
             self._dataloader = DataLoader(self.dset, batch_size=batch_size, sampler=self.dataloader_sampler, collate_fn=collate_fn, shuffle=shuffle)
-
+            self.binning = True
         
     @property
     def checkpoint_folder(self): return self._checkpoint_folder
@@ -222,7 +239,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             
     
-    def train(self, seed=42, epochs=100, binning=True, weight_by_distance=False, save_every=1):
+    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100):
         """Train the model.
 
         Args:
@@ -239,15 +256,17 @@ class Fitter_AE:
         # set seed
         torch.manual_seed(seed)
         
-        if binning:
+        if self.binning:
             self.configure_dataloader(collate_fn=self.dataloader_sampler.custom_collate_fn)
+        else:
+            self.configure_dataloader(shuffle=True, batch_size=batch_size)
         
         # training loop
         for epoch in range(self.start_epoch, epochs):
             fill_embeddings = False # TODO: fill embeddings during training
 
             loss_dict = self.loss_function( self.dataloader,
-                                            binning=binning,
+                                            binning=self.binning,
                                             weight_by_distance=weight_by_distance, )
             
             # divide by batches inplace

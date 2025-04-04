@@ -65,7 +65,7 @@ class Fake_PV_viz:
            
     @lru_cache(maxsize=10)
     def select_datacube(self,i):
-        self.dset.noise_ = self.dset.h5_keys()[i]
+        self.dset.noise_ = i # self.dset.h5_keys()[i]
         # self.dset.scale = False
         return self.dset[:][1] # 100, 100, 500
     

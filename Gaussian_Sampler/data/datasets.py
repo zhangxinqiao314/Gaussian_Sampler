@@ -35,7 +35,7 @@ def draw_m_in_array(size_=100):
 class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False, 
                  scaler=Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())]),
-                 scaling_kernel_size = 1):
+                 scaling_kernel_size = 1, noise_level = 0):
         '''dset is x*y,spec_len'''
         self.save_folder = save_folder
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
@@ -43,14 +43,14 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.shape = shape
         self.spec_len = self.shape[-1]
         self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
-        # self.mask = draw_m_in_array(self.shape[0])
+        # self.mask = draw_m_in_array(self.shape[0]).flatten()
         if overwrite: self.generate_pv_data()
         
         self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
         self.noise_levels = list(self.h5_keys())
-        self._noise = self.h5_keys()[0]
+        self._noise = self.noise_levels[noise_level]
         self.scaler = scaler
         self.scaling_kernel_size = scaling_kernel_size
         if scaled: self.fit_scalers()
@@ -58,9 +58,11 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     @property
     def noise_(self): return self._noise
     @noise_.setter
-    def noise_(self, i): 
+    def noise_(self, i):
+        old_noise = self._noise
         self._noise = self.h5_keys()[i] if isinstance(i, int) else i
-        self.fit_scalers()
+        if old_noise != self._noise and self.scale:
+            self.fit_scalers()
         
     @staticmethod
     def noise(i): 
@@ -97,10 +99,10 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         with self.open_h5() as f:
             if self.scaling_kernel_size==1:
                 self.kernel_scalers = []
-                for dat in tqdm(f[self.noise_], desc="Fitting scalers"):
+                for dat in tqdm(f[self.noise_], desc=f"Fitting scalers for {self.noise_}"):
                     self.kernel_scalers.append( self.scaler.fit(dat.reshape(-1, 1)) )
             else:
-                for idx in tqdm(range(self.shape[0]*self.shape[1]), desc='Fitting scalers'):
+                for idx in tqdm(range(self.shape[0]*self.shape[1]), desc=f'Fitting scalers for {self.noise_}'):
                     x_ = idx//self.shape[1]
                     y_ = idx%self.shape[1]
                     
