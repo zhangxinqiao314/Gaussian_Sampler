@@ -178,7 +178,7 @@ class Fitter_AE:
                                                            max_pool=True),
                     "hidden_embedding": block_factory(FC_Block)(output_size_list=[16,8,4])
                 },
-                "skip_connections": ["hidden_xfc", "hidden_embedding"] },
+                "skip_connections": {"hidden_xfc": "hidden_embedding"} },
                  final_activation_function = pseudovoigt_1D_activations,
                  final_activation_kwargs = {},
               
