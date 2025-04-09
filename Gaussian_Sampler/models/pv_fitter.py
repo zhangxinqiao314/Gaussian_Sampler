@@ -22,7 +22,7 @@ from datetime import date
 from tqdm import tqdm
 
 #TODO: make classes out of functions. 
-class pseudovoigt_1D_fitters(limits=[1,1,975]):
+class pseudovoigt_1D_fitters():
     def __init__(self, limits=[1,1,975]):
         self.limits = limits
     
@@ -55,6 +55,34 @@ def pseudovoigt_1D_activations(embedding):
     nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
     return torch.stack([A,x,w,nu],axis=2)
 
+def _gaussian_component(A, x, x_, w):
+    """Calculate the Gaussian component of the Pseudo-Voigt profile
+    
+    Args:
+        A (torch.Tensor): Area under curve
+        x (torch.Tensor): Mean positions
+        x_ (torch.Tensor): X-axis points
+        w (torch.Tensor): Full Width at Half Maximum (FWHM)
+    """
+    gaussian_factor = (4 * torch.log(torch.tensor(2)) / torch.pi) ** 0.5
+    gaussian = (A * gaussian_factor / w * 
+               torch.exp(-4 * torch.log(torch.tensor(2)) / w**2 * 
+                        (x_ - x)**2))
+    return gaussian
+
+def _lorentzian_component(A, x, x_, w):
+    """Calculate the Lorentzian component of the Pseudo-Voigt profile
+    
+    Args:
+        A (torch.Tensor): Area under curve
+        x (torch.Tensor): Mean positions
+        x_ (torch.Tensor): X-axis points
+        w (torch.Tensor): Full Width at Half Maximum (FWHM)
+    """
+    lorentzian = (A * (2/torch.pi * w) / 
+                  (4 * (x_ - x)**2 + w**2))
+    return lorentzian
+
 def generate_pseudovoigt_1D(embedding, dset, spec_len=None):
     """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
@@ -79,10 +107,10 @@ def generate_pseudovoigt_1D(embedding, dset, spec_len=None):
     """
     device = embedding.device
     # Unpack embedding tensor along last dimension (shape: [..., 4])
-    A = embedding[..., 0]  # Area
-    x = embedding[..., 1]  # Mean position
-    w = embedding[..., 2]  # FWHM
-    nu = embedding[..., 3] # Lorentzian character fraction
+    A = embedding[..., 0].unsqueeze(-1)  # Area
+    x = embedding[..., 1].unsqueeze(-1)  # Mean position
+    w = embedding[..., 2].unsqueeze(-1)  # FWHM
+    nu = embedding[..., 3].unsqueeze(-1) # Lorentzian character fraction
     
     s = x.shape  # (_, num_fits)    
     if spec_len is not None:
@@ -90,14 +118,12 @@ def generate_pseudovoigt_1D(embedding, dset, spec_len=None):
     
     x_ = torch.arange(dset.spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
     
-    # Gaussian component
-    gaussian = A.unsqueeze(-1)*(4*torch.log(torch.tensor(2))/torch.pi)**0.5 / w.unsqueeze(-1) * \
-            torch.exp(-4*torch.log(torch.tensor(2)) / w.unsqueeze(-1)**2 * (x_-x.unsqueeze(-1))**2)
-    # Lorentzian component (simplified version)
-    lorentzian = A.unsqueeze(-1)*( 2/torch.pi * w.unsqueeze(-1) / \
-                                   (4*(x_-x.unsqueeze(-1))**2 + w.unsqueeze(-1)**2) )
+    # Calculate components
+    gaussian = _gaussian_component(A, x, x_, w)
+    lorentzian = _lorentzian_component(A, x, x_, w)
+    
     # Pseudo-Voigt profile
-    pseudovoigt = nu.unsqueeze(-1)*lorentzian + (1-nu.unsqueeze(-1))*gaussian #+  Ib.unsqueeze(-1)
+    pseudovoigt = nu * lorentzian + (1 - nu) * gaussian
 
     return pseudovoigt.to(torch.float32)
 
