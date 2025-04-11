@@ -83,7 +83,7 @@ class pseudovoigt_1D_fitters():
                     (4 * (x_ - x)**2 + w**2))
         return lorentzian
 
-    def generate_pseudovoigt_1D(self, embedding, dset, spec_len=None):
+    def generate_fit(self, embedding, dset, spec_len=None):
         """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
         This function implements the Pseudo-Voigt profile as described in:
@@ -179,9 +179,6 @@ class Fitter_AE:
                     "hidden_embedding": block_factory(FC_Block)(output_size_list=[16,8,4])
                 },
                 "skip_connections": {"hidden_xfc": "hidden_embedding"} },
-                 final_activation_function = pseudovoigt_1D_activations,
-                 final_activation_kwargs = {},
-              
                 checkpoint_folder='./checkpoints',
                 sampler=None,
                 sampler_params={},
