@@ -16,23 +16,33 @@ class Fake_PV_viz:
         self.sampler = sampler
         self.colors = ['green','orange','yellow','brown','pink','gray','magenta','cyan','purple','lime','teal','maroon','indigo','gold']
 
-        if sampler is not None: self.sampler = sampler
+        if sampler is not None: 
+            self.sampler = sampler
+            self.batch_checkboxes = pn.widgets.CheckBoxGroup(name='Batch Checkboxes', 
+                options=list(range(int(np.ceil(self.sampler.batch_size/self.sampler.num_neighbors)))),
+                value = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                inline=True)
+            self.batch_inds = next(iter(self.sampler))
+            # Create dynamic maps for batch plots
+            self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
+                                                        checked=self.batch_checkboxes))
+                                                        #  trigger=self.button_stream.param.button))
+            self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, i=self.i_slider,
+                                                        checked=self.batch_checkboxes))
+                                                        #  trigger=self.button_stream.param.button) )
+            
         
         # Create interactive widgets
         self.i_slider = pn.widgets.IntSlider(name='Noise std', value=0, start=0, end=len(self.dset_list )-1)
         self.x_slider = pn.widgets.IntSlider(name='x', value=25, start=0, end=dset.shape[0]-1)
         self.y_slider = pn.widgets.IntSlider(name='y', value=25, start=0, end=dset.shape[1]-1)
         self.s_slider = pn.widgets.IntSlider(name='spectral value', value=0, start=0, end=dset.shape[2]-1)
-        self.batch_checkboxes = pn.widgets.CheckBoxGroup(name='Batch Checkboxes', 
-            options=list(range(int(np.ceil(self.sampler.batch_size/self.sampler.num_neighbors)))),
-            value = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            inline=True)
         
         
         self.button_stream = streams.Stream.define('ButtonStream', button=False)()
         self.button = pn.widgets.Button(name='New Batch', button_type='primary')
         self.button.on_click(lambda event: self.button_stream.event(button=True))
-        self.batch_inds = next(iter(self.sampler))
+
         def trigger(click): self.batch_inds = next(iter(self.sampler))
         pn.bind(trigger, self.button_stream.param.button)
         
@@ -53,14 +63,6 @@ class Fake_PV_viz:
                                                       i=self.i_slider, x=self.x_slider, y=self.y_slider))
         self.zero_spec_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
                                                     i=0, x=self.x_slider, y=self.y_slider))
-        
-        # Create dynamic maps for batch plots
-        self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
-                                                     checked=self.batch_checkboxes))
-                                                    #  trigger=self.button_stream.param.button))
-        self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, i=self.i_slider,
-                                                     checked=self.batch_checkboxes))
-                                                    #  trigger=self.button_stream.param.button) )
         
            
     @lru_cache(maxsize=10)

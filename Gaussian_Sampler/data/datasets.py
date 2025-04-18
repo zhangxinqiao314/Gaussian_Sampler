@@ -46,14 +46,17 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         # self.mask = draw_m_in_array(self.shape[0]).flatten()
         if overwrite: self.generate_pv_data()
         
-        self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
-        self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         self.scale = scaled
         self.noise_levels = list(self.h5_keys())
         self._noise = self.noise_levels[noise_level]
         self.scaler = scaler
         self.scaling_kernel_size = scaling_kernel_size
-        if scaled: self.fit_scalers()
+        self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
+
+        if scaled:
+            self.fit_scalers()
+            for i in tqdm(range(len(self.zero_dset)), desc='Scaling zero dset'):
+                self.zero_dset[i] = self.scale_data(self.zero_dset[i], i)
         
     @property
     def noise_(self): return self._noise
@@ -141,6 +144,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __len__(self): return (self.shape[0]*self.shape[1])
 
     def __getitem__(self, idx):
+        idx=7889
         with self.open_h5() as f:
             try: data = np.array([f[self.noise_][i] for i in idx])
             except: data = f[self.noise_][idx]
@@ -154,8 +158,6 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     
     def h5_keys(self): return list(self.open_h5().keys())
     
-    def unscale(self, data, idx): return data*torch.tensor(self.maxes[idx]).to(data.device)
-
     def generate_pv_data(self):
         print('Generating data...')
         with self.open_h5() as f:   

@@ -48,7 +48,7 @@ class pseudovoigt_1D_fitters():
                 - nu: Lorentzian character fraction (index 3)
             limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
         '''
-        A = 0.5 * nn.Tanh()(embedding[..., 0]) + 0.5 # area under curve 
+        A = nn.ReLU()(embedding[..., 0]) # area under curve 
         # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
         x = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-3) # mean
         w = torch.clamp(nn.Tanh()(embedding[..., 2])/2 + 0.5, min=1e-3) # fwhm
