@@ -79,8 +79,7 @@ class pseudovoigt_1D_fitters():
             x_ (torch.Tensor): X-axis points
             w (torch.Tensor): Full Width at Half Maximum (FWHM)
         """
-        lorentzian = (A * (2/torch.pi * w) / 
-                    (4 * (x_ - x)**2 + w**2))
+        lorentzian = (A * (2/torch.pi * w) / (4 * (x_ - x)**2 + w**2))
         return lorentzian
 
     def generate_fit(self, embedding, dset, spec_len=None):
@@ -121,6 +120,109 @@ class pseudovoigt_1D_fitters():
         # Calculate components
         gaussian = self._gaussian_component(A, x, x_, w)
         lorentzian = self._lorentzian_component(A, x, x_, w)
+        
+        # Pseudo-Voigt profile
+        pseudovoigt = nu * lorentzian + (1 - nu) * gaussian
+
+        return pseudovoigt.to(torch.float32)
+
+
+class pseudovoigt_1D_fitters_new():
+    '''https://www.surfacesciencewestern.com/wp-content/uploads/ass18_biesinger.pdf'''
+    
+    def __init__(self, limits=[1,1,975]):
+        self.limits = limits
+    
+    def scale_parameters(self, embedding):
+        h = self.limits[0] * embedding[..., 0] # amplitude
+        E = self.limits[1] * embedding[..., 1] # mean
+        F = self.limits[2] * embedding[..., 2] # fwhm
+        nu = embedding[..., 3] # fraction voight character
+        return torch.stack([h,E,F,nu],axis=2)
+
+    def apply_activations(self, embedding):
+        '''This function takes an embedding and scales it to the limits of the parameters
+        
+        This function implements the Pseudo-Voigt profile as described in:
+        https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
+        
+        Args:
+            embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
+                - A: Area under curve (index 0)
+                - x: Mean position (index 1)
+                - w: Full Width at Half Maximum (FWHM) (index 2)
+                - nu: Lorentzian character fraction (index 3)
+            limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
+        '''
+        h = nn.ReLU()(embedding[..., 0]) # amplitude
+        E = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-3) # mean
+        F = torch.clamp(nn.Tanh()(embedding[..., 2])/2 + 0.5, min=1e-3) # fwhm
+        nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
+        return torch.stack([h,E,F,nu],axis=2)
+
+    def _gaussian_component(self, h, E, x_, F):
+        """Calculate the Gaussian component of the Pseudo-Voigt profile
+        
+        Args:
+            h (torch.Tensor): amplitude
+            E (torch.Tensor): mean
+            x_ (torch.Tensor): X-axis points
+            sigma (torch.Tensor): standard deviation
+        """
+        gaussian = h * torch.exp( -4 * torch.log(torch.tensor(2)) \
+                                     * ((x_-E)/F)**2 )
+        return gaussian
+
+    def _lorentzian_component(self, h, E, x_, F):
+        """Calculate the Lorentzian component of the Pseudo-Voigt profile
+        
+        Args:
+            h (torch.Tensor): amplitude
+            E (torch.Tensor): mean
+            x_ (torch.Tensor): X-axis points
+            F (torch.Tensor): Full Width at Half Maximum (FWHM)
+        """
+        lorentzian = h /(1  + 4*((x_-E)/F)**2)
+        return lorentzian
+
+    def generate_fit(self, embedding, dset, spec_len=None):
+        """Generate 1D Pseudo-Voigt profiles from embedding parameters.
+
+        This function implements the Pseudo-Voigt profile as described in:
+        https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
+
+        The Pseudo-Voigt profile is a linear combination of Gaussian and Lorentzian profiles,
+        controlled by the mixing parameter nu.
+
+        Args:
+            embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
+                - A: Area under curve (index 0)
+                - x: Mean position (index 1)
+                - w: Full Width at Half Maximum (FWHM) (index 2)
+                - nu: Lorentzian character fraction (index 3)
+            dset: Dataset containing spectral information with attribute spec_len
+            return_params (bool): If True, returns both profile and parameters. Defaults to False
+
+        Returns:
+            torch.Tensor: Pseudo-Voigt profiles of shape (batch_size, num_fits, spec_len)
+            torch.Tensor: (Optional) Parameters [A, x, w, nu] if return_params=True
+        """
+        device = embedding.device
+        # Unpack embedding tensor along last dimension (shape: [..., 4])
+        h = embedding[..., 0].unsqueeze(-1)  # amplitude
+        E = embedding[..., 1].unsqueeze(-1)  # mean
+        F = embedding[..., 2].unsqueeze(-1)  # FWHM
+        nu = embedding[..., 3].unsqueeze(-1) # Lorentzian character fraction
+        
+        s = h.shape  # (_, num_fits)    
+        if spec_len is not None:
+            s = (s[0],-1,spec_len)
+        
+        x_ = torch.arange(dset.spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
+        
+        # Calculate components
+        gaussian = self._gaussian_component(h, E, x_, F)
+        lorentzian = self._lorentzian_component(h, E, x_, F)
         
         # Pseudo-Voigt profile
         pseudovoigt = nu * lorentzian + (1 - nu) * gaussian
