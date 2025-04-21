@@ -326,7 +326,7 @@ class Fitter_AE:
             self._dataloader_sampler = None
             self.binning = False
         else:
-            self._dataloader_sampler = Gaussian_Sampler(self.dset, orig_shape, batch_size, gaussian_std, num_neighbors)
+            self._dataloader_sampler = sampler(self.dset, orig_shape, batch_size, gaussian_std, num_neighbors)
             self.binning = True
     
     @property
