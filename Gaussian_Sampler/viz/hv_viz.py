@@ -16,20 +16,6 @@ class Fake_PV_viz:
         self.sampler = sampler
         self.colors = ['green','orange','yellow','brown','pink','gray','magenta','cyan','purple','lime','teal','maroon','indigo','gold']
 
-        if sampler is not None: 
-            self.sampler = sampler
-            self.batch_checkboxes = pn.widgets.CheckBoxGroup(name='Batch Checkboxes', 
-                options=list(range(int(np.ceil(self.sampler.batch_size/self.sampler.num_neighbors)))),
-                value = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-                inline=True)
-            self.batch_inds = next(iter(self.sampler))
-            # Create dynamic maps for batch plots
-            self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
-                                                        checked=self.batch_checkboxes))
-                                                        #  trigger=self.button_stream.param.button))
-            self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, i=self.i_slider,
-                                                        checked=self.batch_checkboxes))
-                                                        #  trigger=self.button_stream.param.button) )
             
         
         # Create interactive widgets
@@ -65,10 +51,23 @@ class Fake_PV_viz:
                                                     i=0, x=self.x_slider, y=self.y_slider))
         
            
+        if sampler is not None: 
+            self.sampler = sampler
+            self.batch_checkboxes = pn.widgets.CheckBoxGroup(name='Batch Checkboxes', 
+                options=list(range(int(np.ceil(self.sampler.batch_size/self.sampler.num_neighbors)))),
+                value = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                inline=True)
+            self.batch_inds = next(iter(self.sampler))
+            # Create dynamic maps for batch plots
+            self.batch_inds_dmap = hv.DynamicMap(pn.bind(self.plot_batch_points, 
+                                                        checked=self.batch_checkboxes))
+                                                        #  trigger=self.button_stream.param.button))
+            self.batch_spec_dmap = hv.DynamicMap(pn.bind(self.plot_batch_spectrum, i=self.i_slider,
+                                                        checked=self.batch_checkboxes))
+                                                        #  trigger=self.button_stream.param.button) )
     @lru_cache(maxsize=10)
     def select_datacube(self,i):
         self.dset.noise_ = i # self.dset.h5_keys()[i]
-        # self.dset.scale = False
         return self.dset[:][1] # 100, 100, 500
     
     ############################################ input data helpers

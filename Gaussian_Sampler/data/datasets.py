@@ -42,21 +42,17 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.fwhm, self.nu_ = 50, 0.7
         self.shape = shape
         self.spec_len = self.shape[-1]
-        self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
-        # self.mask = draw_m_in_array(self.shape[0]).flatten()
+        # self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
+        self.mask = draw_m_in_array(self.shape[0]).flatten()
         if overwrite: self.generate_pv_data()
         
         self.scale = scaled
+        self.scaler = scaler
         self.noise_levels = list(self.h5_keys())
         self._noise = self.noise_levels[noise_level]
-        self.scaler = scaler
-        self.scaling_kernel_size = scaling_kernel_size
-        self.zero_dset = self.open_h5()[list(self.open_h5().keys())[0]][:]
+        self._scaling_kernel_size = scaling_kernel_size
+        if self.scale: self.fit_scalers()
 
-        if scaled:
-            self.fit_scalers()
-            for i in tqdm(range(len(self.zero_dset)), desc='Scaling zero dset'):
-                self.zero_dset[i] = self.scale_data(self.zero_dset[i], i)
         
     @property
     def noise_(self): return self._noise
@@ -66,7 +62,16 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self._noise = self.h5_keys()[i] if isinstance(i, int) else i
         if old_noise != self._noise and self.scale:
             self.fit_scalers()
-        
+            
+    @property
+    def scaling_kernel_size(self): return self._scaling_kernel_size
+    @scaling_kernel_size.setter
+    def scaling_kernel_size(self, i):
+        old_scaling_kernel_size = self._scaling_kernel_size
+        self._scaling_kernel_size = i
+        if old_scaling_kernel_size != self._scaling_kernel_size and self.scale:
+            self.fit_scalers()
+            
     @staticmethod
     def noise(i): 
         # return (i/20)**(1.5)
@@ -102,10 +107,10 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         with self.open_h5() as f:
             if self.scaling_kernel_size==1:
                 self.kernel_scalers = []
-                for dat in tqdm(f[self.noise_], desc=f"Fitting scalers for {self.noise_}"):
+                for dat in tqdm(f[self.noise_], desc=f"Fitting scalers for {self.noise_}, kernel size {self.scaling_kernel_size}"):
                     self.kernel_scalers.append( self.scaler.fit(dat.reshape(-1, 1)) )
             else:
-                for idx in tqdm(range(self.shape[0]*self.shape[1]), desc=f'Fitting scalers for {self.noise_}'):
+                for idx in tqdm(range(self.shape[0]*self.shape[1]), desc=f'Fitting scalers for {self.noise_}, kernel size {self.scaling_kernel_size}'):
                     x_ = idx//self.shape[1]
                     y_ = idx%self.shape[1]
                     
@@ -152,6 +157,16 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             if self.scale: data = self.scale_data(data, idx)
             
             return idx, data
+        
+    def getitem_zero_dset(self,idx):
+        # idx=7889
+        with self.open_h5() as f:
+            try: data = np.array([f[self.noise_levels[0]][i] for i in idx])
+            except: data = f[self.noise_levels[0]][idx]
+            
+            if self.scale: data = self.scale_data(data, idx)
+            
+            return idx,data
     
     
     def open_h5(self): return h5py.File(self.h5_name, 'a')
