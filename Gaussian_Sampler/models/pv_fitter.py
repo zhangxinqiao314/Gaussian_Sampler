@@ -185,7 +185,7 @@ class pseudovoigt_1D_fitters_new():
         lorentzian = h /(1  + 4*((x_-E)/F)**2)
         return lorentzian
 
-    def generate_fit(self, embedding, dset, spec_len=None):
+    def generate_fit(self, embedding, spec_len=None):
         """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
         This function implements the Pseudo-Voigt profile as described in:
@@ -216,9 +216,9 @@ class pseudovoigt_1D_fitters_new():
         
         s = h.shape  # (_, num_fits)    
         if spec_len is not None:
-            s = (s[0],-1,spec_len)
+            s = (s[0],s[1],spec_len)
         
-        x_ = torch.arange(dset.spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
+        x_ = torch.arange(spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
         
         # Calculate components
         gaussian = self._gaussian_component(h, E, x_, F)

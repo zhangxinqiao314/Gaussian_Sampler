@@ -15,7 +15,7 @@ from sklearn.pipeline import Pipeline
 def draw_m_in_array(size_=100):
     arr_ = np.zeros((size_, size_), dtype=int)
     w=size_//10
-    size=size_//2
+    size=int(size_/1.5)
     arr = np.zeros((size, size), dtype=int)
 
     for i in range(size):
@@ -25,19 +25,27 @@ def draw_m_in_array(size_=100):
         arr[i, size-w:size] = 1
         # Diagonal from left to middle
         if w <= i < size // 2:
-            arr[i-w:i+w,i] = 1
+            arr[size-i-w:size-i+w,i] = 1
             # Diagonal from right to middle
-            arr[i-w:i+w, size-(i+1)] = 1
-        arr_[size_//4:size_//4+size,size_//4:size_ //4+size] = arr
+            arr[size-i-w:size-i+w, size-(i+1)] = 1
+        arr_[size_//6:size_//6+size,size_//6:size_ //6+size] = arr
     return arr_
 
 
 class Fake_PV_Dataset(torch.utils.data.Dataset):
-    def __init__(self, scaled=False, shape=[100,100,500], save_folder='./', overwrite=False, 
+    def __init__(self, scaled=False, 
+                 shape=[100,100,500], 
+                 save_folder='./', 
+                 overwrite=False, 
+                 pv_param_classes={'h':[5,6,9,10], 'E':[0,100,400,500,700], 'F':[50,50,70,90,90], 'nu':[0.7,0.7,0.7,0.4,0.4]},
+                 pv_fitter=None,
                  scaler=Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())]),
-                 scaling_kernel_size = 1, noise_level = 0):
+                 scaling_kernel_size = 1, 
+                 noise_level = 0):
         '''dset is x*y,spec_len'''
         self.save_folder = save_folder
+        self.pv_fitter = pv_fitter
+        self.pv_param_classes = pv_param_classes
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
         self.fwhm, self.nu_ = 50, 0.7
         self.shape = shape
@@ -85,7 +93,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         return y
 
     def add_noise(self,I,y,noise=0.1,):
-        noise = np.random.normal(0, noise*(I), self.shape[-1]) # make some noise even if 0
+        noise = np.random.normal(0, noise*(I), [self.shape[0]*self.shape[1],self.shape[-1]]) # make some noise even if 0
         noisy = y + noise
         noisy[noisy<0] = 0
         return noisy
@@ -168,32 +176,28 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             
             return idx,data
     
-    
     def open_h5(self): return h5py.File(self.h5_name, 'a')
     
     def h5_keys(self): return list(self.open_h5().keys())
     
     def generate_pv_data(self):
+        '''This function takes a dictionary of parameters classes and returns a numpy array of parameters'''
+        
         print('Generating data...')
+        embedding = torch.stack( [torch.tensor(x) for x in self.pv_param_classes.values()], axis=1)
+        fit = self.pv_fitter.generate_fit(embedding,spec_len=self.spec_len).squeeze().to('cpu').numpy()
+        fit = fit.repeat(20,0).repeat(20,1)
+        fit = fit.reshape(-1,self.shape[-1])*self.mask.reshape(-1,1)
+        
         with self.open_h5() as f:   
-
             for i in tqdm(range(20)):
                 noise_ = Fake_PV_Dataset.noise(i)
                 try: del f[f'{noise_:06.3f}_noise']
                 except: pass
                 dset = f.create_dataset(f'{noise_:06.3f}_noise', 
-                                                shape=(self.shape[0]*self.shape[1],self.shape[2]), dtype=np.float32)
-                for x_ in range(self.shape[0]):
-                    for y_ in range(self.shape[1]):
-                        I = y_/5
-                        A = Fake_PV_Dataset.pv_area(I, w=self.fwhm, nu=self.nu_)
-                        if self.mask[y_+x_*self.shape[0]] == 1:
-                            dset[x_+y_*self.shape[0]] = self.add_noise(I,
-                                                    self.write_pseudovoight(A, x_*2, self.fwhm, self.nu_),
-                                                    noise = noise_)
-                        else: dset[x_+y_*self.shape[0]] = self.add_noise(I,
-                                                       np.zeros(self.shape[-1]),
-                                                       noise = noise_)
+                                        data = self.add_noise(I = fit.max(), y=fit, noise=noise_),
+                                        dtype=np.float32)
+                
                 f.flush()
 
 class Fake_PV_Embeddings(torch.utils.data.Dataset):
