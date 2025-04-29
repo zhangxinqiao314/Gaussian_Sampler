@@ -47,8 +47,8 @@ class Fake_PV_viz:
                                                i=self.i_slider, x=self.x_slider, y=self.y_slider))
         self.spec_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
                                                       i=self.i_slider, x=self.x_slider, y=self.y_slider))
-        self.zero_spec_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
-                                                    i=0, x=self.x_slider, y=self.y_slider))
+        self.zero_spec_dmap = hv.DynamicMap(pn.bind(self.plot_zero_datacube_spectrum, 
+                                                    i=self.i_slider, x=self.x_slider, y=self.y_slider))
         
            
         if sampler is not None: 
@@ -68,7 +68,12 @@ class Fake_PV_viz:
     @lru_cache(maxsize=10)
     def select_datacube(self,i):
         self.dset.noise_ = i # self.dset.h5_keys()[i]
-        return self.dset[:][1] # 100, 100, 500
+        return self.dset[:][1] # 100, 100, 500  
+                                                         
+    @lru_cache(maxsize=10)
+    def select_zero_datacube(self,i):
+        self.dset.noise_ = i # self.dset.h5_keys()[i]
+        return self.dset.getitem_zero_dset(slice(0,self.dset.shape[0]*self.dset.shape[1]))[1] # 100, 100, 500
     
     ############################################ input data helpers
     
@@ -83,7 +88,8 @@ class Fake_PV_viz:
     
     def plot_datacube_img(self, i, s):
         datacube = self.select_datacube(i)[:].reshape(self.dset.shape[0],self.dset.shape[1],self.dset.shape[2])
-        data_ = np.flipud(datacube[:, :, s].T)
+        data_ = np.flipud(datacube[:, :, s])
+        # data_ = datacube[:, :, s]
         return hv.Image(
                     data_, bounds=(0,0,datacube.shape[0],datacube.shape[1]),
                     kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
@@ -95,7 +101,8 @@ class Fake_PV_viz:
     
     def plot_datacube_img_scaled(self, i, s): # TODO: fix
         datacube = self.select_datacube(i).reshape(self.dset.shape[0],self.dset.shape[1],self.dset.shape[2])
-        data_ = np.flipud(datacube[:, s].reshape(self.shape[0],self.shape[1]).T)
+        data_ = np.flipud(datacube[:, s].reshape(self.shape[0],self.shape[1]))
+        # data_ = datacube[:, :, s]
         return hv.Image(data_, bounds=(0,0,self.dset.shape[0],self.dset.shape[1]),
                         kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
@@ -105,8 +112,18 @@ class Fake_PV_viz:
 
     def plot_datacube_spectrum(self, i, x, y):
         datacube = self.select_datacube(i).reshape(self.dset.shape)
+
+        return hv.Curve(datacube[y, x],
+                        kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
+                        vdims=[hv.Dimension('intensity', label='Intensity')],
+                        ).opts(width=350, height=300,
+                                ylim=(0, datacube.max()), xlim=(0, self.dset.spec_len),
+                                axiswise=True, shared_axes=False)
+                        
+    def plot_zero_datacube_spectrum(self, i, x, y):
+        datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
         
-        return hv.Curve(datacube[x, y],
+        return hv.Curve(datacube[y, x],
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(width=350, height=300,
