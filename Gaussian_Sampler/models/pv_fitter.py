@@ -502,7 +502,7 @@ class Fitter_AE:
         """Compute all loss components"""
         loss_dict = {
             'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
-            'sparse_max_loss': 0, 'l2_batchwise_loss': 0
+            'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0
         }
         
         # Compute individual losses
@@ -576,6 +576,9 @@ class Fitter_AE:
             else:
                 predicted_x, embedding, sd, mn = self.encoder(x, beta)
             
+            zero_loss = F.mse_loss(torch.tensor(self.dset.getitem_zero_dset(idx.detach().cpu().numpy())[1]).to(self.device), 
+                                                predicted_x[:,0])
+            
             # Process binning if needed
             if binning:
                 x, predicted_x = self._process_batch_binning(x, predicted_x, idx, weight_by_distance)
@@ -591,6 +594,7 @@ class Fitter_AE:
             # Backward pass and optimization
             loss.backward()
             self.optimizer.step()
+            batch_loss_dict['zero_loss'] = zero_loss.item()
             
             # Handle embeddings and logging
             if fill_embeddings:

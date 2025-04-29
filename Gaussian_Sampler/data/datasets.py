@@ -10,7 +10,7 @@ import h5py
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
-
+from sklearn.base import clone
 
 def draw_m_in_array(size_=100):
     arr_ = np.zeros((size_, size_), dtype=int)
@@ -55,11 +55,12 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         if overwrite: self.generate_pv_data()
         
         self.scale = scaled
-        self.scaler = scaler
         self.noise_levels = list(self.h5_keys())
         self._noise = self.noise_levels[noise_level]
-        self._scaling_kernel_size = scaling_kernel_size
-        if self.scale: self.fit_scalers()
+        if self.scale: 
+            self._scaling_kernel_size = scaling_kernel_size
+            self.scaler = scaler
+            self.fit_scalers()
 
         
     @property
@@ -68,8 +69,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     def noise_(self, i):
         old_noise = self._noise
         self._noise = self.h5_keys()[i] if isinstance(i, int) else i
-        if old_noise != self._noise and self.scale:
-            self.fit_scalers()
+        if old_noise != self._noise and self.scale: self.fit_scalers()
             
     @property
     def scaling_kernel_size(self): return self._scaling_kernel_size
@@ -114,9 +114,9 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.kernel_scalers = []
         with self.open_h5() as f:
             if self.scaling_kernel_size==1:
-                self.kernel_scalers = []
                 for dat in tqdm(f[self.noise_], desc=f"Fitting scalers for {self.noise_}, kernel size {self.scaling_kernel_size}"):
-                    self.kernel_scalers.append( self.scaler.fit(dat.reshape(-1, 1)) )
+                    new_scaler = clone(self.scaler)
+                    self.kernel_scalers.append( new_scaler.fit(dat.reshape(-1, 1)) )
             else:
                 for idx in tqdm(range(self.shape[0]*self.shape[1]), desc=f'Fitting scalers for {self.noise_}, kernel size {self.scaling_kernel_size}'):
                     x_ = idx//self.shape[1]
@@ -131,15 +131,16 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                     # Calculate flattened indices for the kernel region
                     points = [y*self.shape[1]+x for y in range(y_start,y_end) for x in range(x_start, x_end)]
                     data = f[self.noise_][points]
-                    self.kernel_scalers.append(self.scaler.fit(data.reshape(-1, 1)))
+                    new_scaler = clone(self.scaler)
+                    self.kernel_scalers.append(new_scaler.fit(data.reshape(-1, 1)))
  
     def scale_data(self, data, idx):
         if isinstance(idx, int):
             scaled_data = self.kernel_scalers[idx].transform(data.reshape(-1, 1)).reshape(data.shape)
         elif isinstance(idx, slice):
             scalers = [self.kernel_scalers[i] for i in range(*idx.indices(len(self.kernel_scalers)))]
-            scaled_data = np.array([scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
-                                    for scaler,dat in zip(scalers, data)])
+            scaled_data = np.array([ scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
+                                     for scaler,dat in zip(scalers, data) ])
         else:
             scalers = [self.kernel_scalers[i] for i in idx]
             scaled_data = np.array([scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
