@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 
 from datetime import date
 from tqdm import tqdm
-
+import wandb
 #TODO: make classes out of functions. 
 class pseudovoigt_1D_fitters():
     def __init__(self, limits=[1,1,975]):
@@ -185,7 +185,7 @@ class pseudovoigt_1D_fitters_new():
         lorentzian = h /(1  + 4*((x_-E)/F)**2)
         return lorentzian
 
-    def generate_fit(self, embedding, spec_len=None):
+    def generate_fit(self, embedding, spec_len=None, **kwargs, ):
         """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
         This function implements the Pseudo-Voigt profile as described in:
@@ -374,7 +374,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             
     
-    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100):
+    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False):
         """Train the model.
 
         Args:
@@ -384,7 +384,7 @@ class Fitter_AE:
             weight_by_distance (bool): Whether to weight samples by distance. Defaults to True
         """
         today = date.today()
-        save_date=today.strftime('(%Y-%m-%d)')
+        save_date=today.strftime('(%Y-%m-%d, %H:%M:%S)')
         make_folder(self.checkpoint_folder)
         print(os.path.abspath(self.checkpoint_folder))
 
@@ -410,7 +410,7 @@ class Fitter_AE:
             print(
                 f'Epoch: {epoch:03d}/{epochs:03d} | Train Loss: {loss_dict["train_loss"]:.4f}')
             print('.............................')
-
+            if log_wandb: wandb.log(loss_dict)
           #  schedular.step()
           # TODO: add regularization losses
           # TODO: add embedding saver
@@ -418,7 +418,9 @@ class Fitter_AE:
             lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
             self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
             if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,)
-
+            
+        if return_losses: return loss_dict
+        
     def save_checkpoint(self,epoch,loss_dict,**kwargs): # TODO: needs to save sampler
         checkpoint = {
             'encoder': self.encoder.state_dict(),
@@ -477,7 +479,7 @@ class Fitter_AE:
         if not weight_by_distance:
             x = torch.stack([x_.mean(dim=0) for x_ in x])
             predicted_x = torch.stack([x_.mean(dim=0) for x_ in predicted_x])
-            return x.squeeze(), predicted_x.squeeze()
+            return x.squeeze(1), predicted_x.squeeze(1)
         
         # Weight by distance logic
         idx = torch.split(idx, self.dataloader_sampler.num_neighbors)
@@ -562,7 +564,7 @@ class Fitter_AE:
         self.encoder.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
-                               'sparse_max_loss': 0, 'l2_batchwise_loss': 0}
+                               'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0}
 
         for i, (idx, x) in enumerate(tqdm(train_iterator, leave=True, total=len(train_iterator))):
             idx = idx.to(self.device).squeeze()
@@ -585,7 +587,8 @@ class Fitter_AE:
             
             # Compute losses
             loss, batch_loss_dict = self._compute_losses(embedding, x, predicted_x.sum(axis=1), loss_components, coef5)
-            
+            batch_loss_dict['zero_loss'] = zero_loss.item()
+
             # Update accumulated losses
             for k in accumulated_loss_dict:
                 if k in batch_loss_dict:
@@ -594,7 +597,7 @@ class Fitter_AE:
             # Backward pass and optimization
             loss.backward()
             self.optimizer.step()
-            batch_loss_dict['zero_loss'] = zero_loss.item()
+            
             
             # Handle embeddings and logging
             if fill_embeddings:
