@@ -64,7 +64,7 @@ class Py4DSTEM_Dataset(torch.utils.data.Dataset):
             for i in range(data.shape[-1]):
                 for j in range(data.shape[-2]):
                     if ( (data.shape[-2]//2-i)**2 + (data.shape[-1]//2-j)**2 ) < (self.block**2):
-                        data[:,:,i,j] = 0
+                        data[...,i,j] = 0
                         
         if stdv_thresh is not None:
             print(f'Thresholding {stdv_thresh} standard deviations...')
