@@ -1,0 +1,43 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+
+# Ignore OS-generated files
+.DS_Store
+Thumbs.db
+
+# Ignore version control files
+.git/
+.hg/
+.svn/
+
+# Ignore IDE project files
+.vscode/
+.idea/
+
+# Ignore environment files and directories
+env/
+.venv/
+*.env
+*.env.*
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore the Dockerfile and docker-compose.yml if they don’t need to be copied
+Dockerfile
+docker-compose.yml
+
+# Ignore notebooks and datasets (if unnecessary in the build context)
+notebooks/
+data/
+
+# Exclude this file from the build context
+.dockerignore

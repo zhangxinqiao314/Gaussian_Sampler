@@ -1,1 +1,12 @@
 # Requirements
+py4dstem
+torch
+PyMuPDF
+pdf2image
+holoviews
+panel
+wandb
+h5py
+tqdm
+dask
+scipy

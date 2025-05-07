@@ -3,6 +3,8 @@
 *.pth
 *.pkl
 
+*/wandb/*
+*/checkpoints/*
 # cpython files
 */__pycache__/*
 *.pyc

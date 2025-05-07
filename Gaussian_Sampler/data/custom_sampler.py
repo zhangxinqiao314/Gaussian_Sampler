@@ -14,7 +14,7 @@ class Gaussian_Sampler(Sampler):
             num_neighbors (int): Number of additional points to sample around the first point. ( best if batch_size % num_neighbors == 0)
         """
         self.dset = dset
-        self.shape = orig_shape # (H, W, X, Y)
+        self.shape = orig_shape # (H, W, *)
         self.batch_size = batch_size
         self.gaussian_std = gaussian_std
         self.num_neighbors = num_neighbors
@@ -62,6 +62,7 @@ class Gaussian_Sampler(Sampler):
         # This can be adjusted based on the desired number of iterations per epoch
         return (self.shape[0]*self.shape[1]) // self.batch_size
     
-    @staticmethod
-    def custom_collate_fn(batch): 
-        return torch.tensor(batch).float().squeeze()
+    def custom_collate_fn(self, batch, return_idx=True): 
+        if return_idx: 
+            return torch.tensor(batch[0]), torch.tensor(batch[1])
+        else: return torch.tensor(batch).float().squeeze()
