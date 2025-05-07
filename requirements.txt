@@ -1,12 +1,17 @@
 # Requirements
-py4dstem
-torch
+scikit-learn
 PyMuPDF
 pdf2image
-holoviews
 panel
 wandb
 h5py
 tqdm
 dask
 scipy
+py4dstem
+holoviews
+jupyter_bokeh
+pillow
+torch
+wandb
+distutils
