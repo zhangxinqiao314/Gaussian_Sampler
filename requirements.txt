@@ -14,4 +14,8 @@ jupyter_bokeh
 pillow
 torch
 wandb
-distutils
+torchflow
+# M3Learning-Util
+
+# autophyslearn
+datafed_torchflow

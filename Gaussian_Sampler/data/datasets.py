@@ -203,180 +203,187 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
 
 class Fake_PV_Embeddings(torch.utils.data.Dataset):
     def __init__(self, dset, model, checkpoint_path, **kwargs):
-class Py4DSTEM_Dataset(torch.utils.data.Dataset):
-    def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
-        '''
-        dm4 file
-        '''
-        print('Loading dataset...')
-        self.raw_data = py4DSTEM.import_file(file_data, binfactor=binfactor)
-        self.raw_data.get_dp_mean()
-        self.data = self.raw_data.data
-        self.block=block
-        
-        if center is not None: self.center = center
-        else: self.center = [self.data.shape[-2]//2, self.data.shape[-1]//2]
-            
-        print('Preprocessing data...')
-        self.log_data = self._clean_data(center=self.center, **kwargs)
-            
-        print('Done.')
-        self.shape = self.raw_data.shape[:2]+self.log_data.shape[-2:]
-
-    def _clean_data(self, hot_px_threshold=None, log=True, standard=True, minmax=True, center=None, stdv_thresh=None):
-        '''
-        Remove hot pxs
-        do log
-        do minmax scaling
-        '''
-        
-        if hot_px_threshold is not None:
-            print('Removing hot pixels...')
-            self.raw_data.get_dp_mean()
-            dataset, mask_hot_pixels = aux_func.remove_hot_pixels(self.raw_data, 
-                                                                  self.raw_data.tree['dp_mean'].data, 
-                                                                  relative_threshold=hot_px_threshold )
-            dataset = dataset.data
-        else: dataset = self.raw_data.data
-        
-        if center is not None:
-            print('Centering data...')
-            bound = min([center[0],center[1],abs(dataset.shape[-2]-center[0]), abs(dataset.shape[-1]-center[1])])
-            dataset = dataset[...,
-                              self.center[0]-bound:self.center[0]+bound,
-                              self.center[1]-bound:self.center[1]+bound]
-            
-        data = da.from_array(dataset, chunks='auto')
-        data = data.reshape(-1, 
-                        dataset.shape[-2], 
-                        dataset.shape[-1])
-        
-        if self.block>0:
-            print('Blocking center beam...')
-            for i in range(data.shape[-1]):
-                for j in range(data.shape[-2]):
-                    if ( (data.shape[-2]//2-i)**2 + (data.shape[-1]//2-j)**2 ) < (self.block**2):
-                        data[...,i,j] = 0
-                        
-        if stdv_thresh is not None:
-            print(f'Thresholding {stdv_thresh} standard deviations...')
-            thresh = data.mean(axis=(1, 2)) + data.std(axis=(1, 2)) * stdv_thresh
-            mask = data > thresh[:, None, None]
-            data = da.where(mask, thresh[:, None, None], data)
-        if standard:
-            print('Standard scaling data...')
-            data = (data - data.mean(axis=0, keepdims=True)) / data.std(axis=0, keepdims=True)
-        
-        print('Removing NaNs...')
-        data = da.nan_to_num(data)    
-        
-        if log:
-            print('Log scaling data...')
-            data = data - data.min() + 1 + 1e-10
-            data = da.log(data)
-        
-        if minmax:
-            print('Minmax scaling data...')
-            data = (data - data.min()) / (data.max() - data.min())
-            
-        
-        print('Computing to np array...')
-        data = data.compute()
-        return data
-        
-    def __len__(self):
-        return len(self.log_data)
-
-    def __getitem__(self, idx):
-        return self.log_data[idx]
-
-class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
-    def __init__(self, dset, checkpoint, model, embedding=None, **kwargs):
-        '''
-        dm4 file
-        '''
         self.dset = dset
         self.model = model
         self.checkpoint_path = checkpoint_path
-        self.model.load_weights(self.checkpoint_path)
         self.h5_name = self.model.checkpoint_folder + '/embeddings.h5'
         self.device = self.model.encoder.device
         self.noise_levels = list(self.dset.h5_keys())
-        self._noise = self.checkpoint_path.split('/')[-2]
-        self.which = None
         
-    # @property
-    # def noise_(self): return self._noise
-    # @noise_.setter
-    # def noise_(self, i): 
-    #     self._noise = self.dset.h5_keys()[i]
-    #     self.model.load_weights(self.checkpoint_path)
-    
-    def open_h5(self): return h5py.File(self.h5_name, 'a')
-    
-    def h5_keys(self): return list(self.open_h5().keys())
-    
-    def write_embeddings(self, batch_size=100, overwrite=False):
-        with self.open_h5() as f:
-            if not overwrite:
-                try: 
-                    fits = f[f'{self.model.check}_fits']
-                    return
-                except: 
-                    fits = f.create_dataset(f'{self.model.check}_fits', 
-                                                shape=(len(self.dset), 
-                                                        self.model.num_fits, 
-                                                        self.dset.shape[-1]), 
-                                                dtype=np.float32)
-                    overwrite = True
-                try: 
-                    params = f[f'{self.model.check}_params']
-                    return
-                except: 
-                    params = f.create_dataset(f'{self.model.check}_params', 
-                                                shape=(len(self.dset), 
-                                                        self.model.num_fits, 
-                                                        self.model.num_params), 
-                                                dtype=np.float32)
-                    overwrite = True
+# class Py4DSTEM_Dataset(torch.utils.data.Dataset):
+#     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
+#         '''
+#         dm4 file
+#         '''
+#         print('Loading dataset...')
+#         self.raw_data = py4DSTEM.import_file(file_data, binfactor=binfactor)
+#         self.raw_data.get_dp_mean()
+#         self.data = self.raw_data.data
+#         self.block=block
         
-            if overwrite:
-                try: 
-                    del f[f'{self.model.check}_fits']
-                    fits = f.create_dataset(f'{self.model.check}_fits', 
-                                                shape=(len(self.dset), 
-                                                        self.model.num_fits, 
-                                                        self.dset.shape[-1]), 
-                                                dtype=np.float32)
-                except: pass
-                try: 
-                    del f[f'{self.model.check}_params']
-                    params = f.create_dataset(f'{self.model.check}_params', 
-                                                shape=(len(self.dset), 
-                                                        self.model.num_fits, 
-                                                        self.model.num_params), 
-                                                dtype=np.float32)
-                except: pass
+#         if center is not None: self.center = center
+#         else: self.center = [self.data.shape[-2]//2, self.data.shape[-1]//2]
+            
+#         print('Preprocessing data...')
+#         self.log_data = self._clean_data(center=self.center, **kwargs)
+            
+#         print('Done.')
+#         self.shape = self.raw_data.shape[:2]+self.log_data.shape[-2:]
+
+#     def _clean_data(self, hot_px_threshold=None, log=True, standard=True, minmax=True, center=None, stdv_thresh=None):
+#         '''
+#         Remove hot pxs
+#         do log
+#         do minmax scaling
+#         '''
+        
+#         if hot_px_threshold is not None:
+#             print('Removing hot pixels...')
+#             self.raw_data.get_dp_mean()
+#             dataset, mask_hot_pixels = aux_func.remove_hot_pixels(self.raw_data, 
+#                                                                   self.raw_data.tree['dp_mean'].data, 
+#                                                                   relative_threshold=hot_px_threshold )
+#             dataset = dataset.data
+#         else: dataset = self.raw_data.data
+        
+#         if center is not None:
+#             print('Centering data...')
+#             bound = min([center[0],center[1],abs(dataset.shape[-2]-center[0]), abs(dataset.shape[-1]-center[1])])
+#             dataset = dataset[...,
+#                               self.center[0]-bound:self.center[0]+bound,
+#                               self.center[1]-bound:self.center[1]+bound]
+            
+#         data = da.from_array(dataset, chunks='auto')
+#         data = data.reshape(-1, 
+#                         dataset.shape[-2], 
+#                         dataset.shape[-1])
+        
+#         if self.block>0:
+#             print('Blocking center beam...')
+#             for i in range(data.shape[-1]):
+#                 for j in range(data.shape[-2]):
+#                     if ( (data.shape[-2]//2-i)**2 + (data.shape[-1]//2-j)**2 ) < (self.block**2):
+#                         data[...,i,j] = 0
+                        
+#         if stdv_thresh is not None:
+#             print(f'Thresholding {stdv_thresh} standard deviations...')
+#             thresh = data.mean(axis=(1, 2)) + data.std(axis=(1, 2)) * stdv_thresh
+#             mask = data > thresh[:, None, None]
+#             data = da.where(mask, thresh[:, None, None], data)
+#         if standard:
+#             print('Standard scaling data...')
+#             data = (data - data.mean(axis=0, keepdims=True)) / data.std(axis=0, keepdims=True)
+        
+#         print('Removing NaNs...')
+#         data = da.nan_to_num(data)    
+        
+#         if log:
+#             print('Log scaling data...')
+#             data = data - data.min() + 1 + 1e-10
+#             data = da.log(data)
+        
+#         if minmax:
+#             print('Minmax scaling data...')
+#             data = (data - data.min()) / (data.max() - data.min())
+            
+        
+#         print('Computing to np array...')
+#         data = data.compute()
+#         return data
+        
+#     def __len__(self):
+#         return len(self.log_data)
+
+#     def __getitem__(self, idx):
+#         return self.log_data[idx]
+
+# class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
+#     def __init__(self, dset, checkpoint, model, embedding=None, **kwargs):
+#         '''
+#         dm4 file
+#         '''
+#         self.dset = dset
+#         self.model = model
+#         self.checkpoint_path = checkpoint_path
+#         self.model.load_weights(self.checkpoint_path)
+#         self.h5_name = self.model.checkpoint_folder + '/embeddings.h5'
+#         self.device = self.model.encoder.device
+#         self.noise_levels = list(self.dset.h5_keys())
+#         self._noise = self.checkpoint_path.split('/')[-2]
+#         self.which = None
+        
+#     # @property
+#     # def noise_(self): return self._noise
+#     # @noise_.setter
+#     # def noise_(self, i): 
+#     #     self._noise = self.dset.h5_keys()[i]
+#     #     self.model.load_weights(self.checkpoint_path)
+    
+#     def open_h5(self): return h5py.File(self.h5_name, 'a')
+    
+#     def h5_keys(self): return list(self.open_h5().keys())
+    
+#     def write_embeddings(self, batch_size=100, overwrite=False):
+#         with self.open_h5() as f:
+#             if not overwrite:
+#                 try: 
+#                     fits = f[f'{self.model.check}_fits']
+#                     return
+#                 except: 
+#                     fits = f.create_dataset(f'{self.model.check}_fits', 
+#                                                 shape=(len(self.dset), 
+#                                                         self.model.num_fits, 
+#                                                         self.dset.shape[-1]), 
+#                                                 dtype=np.float32)
+#                     overwrite = True
+#                 try: 
+#                     params = f[f'{self.model.check}_params']
+#                     return
+#                 except: 
+#                     params = f.create_dataset(f'{self.model.check}_params', 
+#                                                 shape=(len(self.dset), 
+#                                                         self.model.num_fits, 
+#                                                         self.model.num_params), 
+#                                                 dtype=np.float32)
+#                     overwrite = True
+        
+#             if overwrite:
+#                 try: 
+#                     del f[f'{self.model.check}_fits']
+#                     fits = f.create_dataset(f'{self.model.check}_fits', 
+#                                                 shape=(len(self.dset), 
+#                                                         self.model.num_fits, 
+#                                                         self.dset.shape[-1]), 
+#                                                 dtype=np.float32)
+#                 except: pass
+#                 try: 
+#                     del f[f'{self.model.check}_params']
+#                     params = f.create_dataset(f'{self.model.check}_params', 
+#                                                 shape=(len(self.dset), 
+#                                                         self.model.num_fits, 
+#                                                         self.model.num_params), 
+#                                                 dtype=np.float32)
+#                 except: pass
             
 
-                self.model.configure_dataloader_sampler(sampler=None)
-                self.model.configure_dataloader(batch_size=batch_size)
+#                 self.model.configure_dataloader_sampler(sampler=None)
+#                 self.model.configure_dataloader(batch_size=batch_size)
                 
-                for i, (idx, x) in enumerate(tqdm(self.model.dataloader, leave=True, total=len(self.model.dataloader), desc="Writing embeddings")):
-                    with torch.no_grad():
-                        value = x
-                        batch_size = x.shape[0]
-                        test_value = Variable(value)
-                        test_value = test_value.float().to(self.device)
-                        fits_, params_ = self.model.encoder(test_value)
+#                 for i, (idx, x) in enumerate(tqdm(self.model.dataloader, leave=True, total=len(self.model.dataloader), desc="Writing embeddings")):
+#                     with torch.no_grad():
+#                         value = x
+#                         batch_size = x.shape[0]
+#                         test_value = Variable(value)
+#                         test_value = test_value.float().to(self.device)
+#                         fits_, params_ = self.model.encoder(test_value)
                         
-                        fits[i*batch_size:(i+1)*batch_size] = fits_.cpu().numpy()
-                        params[i*batch_size:(i+1)*batch_size] = params_.cpu().numpy()
+#                         fits[i*batch_size:(i+1)*batch_size] = fits_.cpu().numpy()
+#                         params[i*batch_size:(i+1)*batch_size] = params_.cpu().numpy()
                     
-    def __getitem__(self, idx):
-        with self.open_h5() as f:
-           return f[f'{self.model.check}_fits'][idx], f[f'{self.model.check}_params'][idx]
+#     def __getitem__(self, idx):
+#         with self.open_h5() as f:
+#            return f[f'{self.model.check}_fits'][idx], f[f'{self.model.check}_params'][idx]
         
-    def __len__(self):
-        with self.open_h5() as f:
-            return f[f'{self.model.check}_fits'].shape[0]
+#     def __len__(self):
+#         with self.open_h5() as f:
+#             return f[f'{self.model.check}_fits'].shape[0]

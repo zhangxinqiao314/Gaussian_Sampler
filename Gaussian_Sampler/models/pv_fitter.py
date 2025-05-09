@@ -2,8 +2,8 @@ import sys
 import os
 
 # remove eventually
-sys.path.append('/home/m3learning/Northwestern/M3Learning-Util/src')
-sys.path.append('/home/m3learning/Northwestern/AutoPhysLearn/src')
+sys.path.append('/home/xz498/M3Learning-Util/src')
+sys.path.append('/home/xz498/AutoPhysLearn/src')
 
 from random import shuffle
 from m3util.util.IO import make_folder
