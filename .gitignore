@@ -5,6 +5,29 @@
 
 */wandb/*
 */checkpoints/*
-# cpython files
-*/__pycache__/*
-*.pyc
+*/Gaussian_Sampler_Data/*
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environment
+venv/
+env/
+.env/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Misc
+.DS_Store
