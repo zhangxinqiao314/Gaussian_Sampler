@@ -460,6 +460,7 @@ class Fitter_AE:
             fits, params = self.encoder(x)
             
         return 
+    
     # Loss stuff
     def _initialize_loss_components(self, train_iterator, coef1, coef2, coef3, coef4):
         """Initialize loss components and their coefficients"""
@@ -561,6 +562,7 @@ class Fitter_AE:
         Returns:
             dict: Dictionary containing different loss components and total loss
         """
+        
         self.encoder.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
