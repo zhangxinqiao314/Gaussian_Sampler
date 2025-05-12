@@ -160,10 +160,13 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         # idx=7889
         with self.open_h5() as f:
-            try: data = np.array([f[self.noise_][i] for i in idx])
-            except: data = f[self.noise_][idx]
+            try: 
+                data = np.array([f[self.noise_][i] for i in idx])
+            except: 
+                data = f[self.noise_][idx]
             
-            if self.scale: data = self.scale_data(data, idx)
+            if self.scale: 
+                data = self.scale_data(data, idx)
             
             return idx, data
         

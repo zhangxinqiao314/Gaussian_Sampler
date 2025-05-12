@@ -345,10 +345,10 @@ class Fitter_AE:
         
         # builds the dataloader
         if self.dataloader_sampler is None: 
-            self._dataloader = DataLoader(self.dset, batch_size=batch_size, shuffle=shuffle)
+            self._dataloader = DataLoader(self.dset, batch_size=batch_size, shuffle=shuffle, num_workers=0)
             self.binning = False
         else:
-            self._dataloader = DataLoader(self.dset, batch_size=batch_size, sampler=self.dataloader_sampler, collate_fn=collate_fn, shuffle=shuffle)
+            self._dataloader = DataLoader(self.dset, batch_size=batch_size, sampler=self.dataloader_sampler, collate_fn=collate_fn, shuffle=shuffle, num_workers=0)
             self.binning = True
         
     @property
