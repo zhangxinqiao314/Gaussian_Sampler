@@ -502,6 +502,7 @@ class Fitter_AE:
         }
         return components
 
+    #TODO: much slower with more neighbors. fix scaling
     def _process_batch_binning(self, x, predicted_x, idx, weight_by_distance=False):
         """Process batch with binning and optional distance weighting"""
         x = list(torch.split(x, self.dataloader_sampler.num_neighbors))

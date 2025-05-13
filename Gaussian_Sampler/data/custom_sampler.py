@@ -26,8 +26,19 @@ class Gaussian_Sampler(Sampler):
         split_batches.append(batch[i+self.num_neighbors:])
         return split_batches
 
-    def __iter__(self):
+    def __iter__(self): 
         """Return a batch of indices for each iteration."""
+        # Add warning for inefficient configurations
+        if self.gaussian_std < 2.0 and self.num_neighbors > 10:
+            import warnings
+            warnings.warn(
+                f"\nPotentially slow configuration detected:\n"
+                f"gaussian_std={self.gaussian_std:.1f} with num_neighbors={self.num_neighbors}\n"
+                f"Small std with many neighbors may result in slow sampling.\n"
+                f"Consider increasing gaussian_std or reducing num_neighbors.",
+                RuntimeWarning
+            )
+        
         self.batches = 0
         while self.batches < len(self)-1: # drop last
             batch = []
