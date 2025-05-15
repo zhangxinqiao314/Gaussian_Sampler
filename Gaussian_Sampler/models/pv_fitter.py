@@ -417,7 +417,7 @@ class Fitter_AE:
           # TODO: add lr scheduler
             lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
             self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
-            if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,)
+            if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,wandb_={"run_id": wandb.run.id, "project": wandb.run.project}if log_wandb else {})
             
         if return_losses: return loss_dict
         
