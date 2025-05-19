@@ -18,7 +18,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
-from datetime import date
+from datetime import date, datetime
 from tqdm import tqdm
 import wandb
 #TODO: make classes out of functions. 
@@ -302,13 +302,13 @@ class Fitter_AE:
                                 **encoder_params
                                 ).to(self.device).type(torch.float32)
         self.optimizer = optim.Adam( self.encoder.parameters(), lr=self.learning_rate )
+        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.1)
         self.configure_dataloader_sampler(sampler=sampler, **sampler_params)
         self.configure_dataloader(collate_fn=collate_fn)
         
         self.start_epoch = 0
         self.best_train_loss = float('inf')
         self.checkpoint = None
-        self.scheduler = None
         self._checkpoint_folder = checkpoint_folder
         
     @property
@@ -374,7 +374,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             
     
-    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False):
+    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, lr_scheduling=False, return_losses=False, log_wandb=False):
         """Train the model.
 
         Args:
@@ -383,18 +383,15 @@ class Fitter_AE:
             binning (bool): Whether to use binning in loss calculation. Defaults to True
             weight_by_distance (bool): Whether to weight samples by distance. Defaults to True
         """
-        today = date.today()
-        save_date=today.strftime('(%Y-%m-%d, %H:%M:%S)')
+        save_date = datetime.now().strftime('(%Y-%m-%d_%H-%M-%S)')
         make_folder(self.checkpoint_folder)
         print(os.path.abspath(self.checkpoint_folder))
 
         # set seed
         torch.manual_seed(seed)
         
-        if self.binning:
-            self.configure_dataloader(collate_fn=self.dataloader_sampler.custom_collate_fn)
-        else:
-            self.configure_dataloader(shuffle=True, batch_size=batch_size)
+        if self.binning: self.configure_dataloader(collate_fn=self.dataloader_sampler.custom_collate_fn)
+        else: self.configure_dataloader(shuffle=True, batch_size=batch_size)
         
         # training loop
         for epoch in range(self.start_epoch, epochs):
@@ -407,17 +404,17 @@ class Fitter_AE:
             # divide by batches inplace
             loss_dict.update( (k,v/len(self.dataloader)) for k,v in loss_dict.items())
             
-            print(
-                f'Epoch: {epoch:03d}/{epochs:03d} | Train Loss: {loss_dict["train_loss"]:.4f}')
+            print(f'Epoch: {epoch:03d}/{epochs:03d} | Train Loss: {loss_dict["train_loss"]:.4f}')
             print('.............................')
             if log_wandb: wandb.log(loss_dict)
-          #  schedular.step()
+            if lr_scheduling: self.scheduler.step()
           # TODO: add regularization losses
           # TODO: add embedding saver
           # TODO: add lr scheduler
             lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
-            self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
-            if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,wandb_={"run_id": wandb.run.id, "project": wandb.run.project}if log_wandb else {})
+            self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}' \
+                + str(wandb.run.id) if log_wandb else '' + '.pkl'
+            if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,wandb_={"run_id": wandb.run.id, "project": wandb.run.project} if log_wandb else {})
             
         if return_losses: return loss_dict
         
