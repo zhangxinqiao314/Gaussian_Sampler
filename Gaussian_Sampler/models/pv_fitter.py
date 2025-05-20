@@ -1,6 +1,8 @@
 import sys
 import os
 
+#TODO: fix notebooks with zero_loss instead of gt_loss
+
 # remove eventually
 sys.path.append('/home/xz498/M3Learning-Util/src')
 sys.path.append('/home/xz498/AutoPhysLearn/src')
@@ -229,7 +231,34 @@ class pseudovoigt_1D_fitters_new():
 
         return pseudovoigt.to(torch.float32)
 
+class morlet_1D_fitters():
+    def __init__(self, limits=[1,1,975]):
+        self.limits = limits
+    
+    def scale_parameters(self, embedding):
+        amp = self.limits[0] * embedding[..., 0] # amplitude
+        t0 = self.limits[1] * embedding[..., 1] # mean
+        return torch.stack([amp,t0],axis=2)
 
+    def apply_activations(self, embedding):
+        amp = nn.ReLU()(embedding[..., 0]) # amplitude
+        t0 = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-3) # mean
+        
+        return torch.stack([amp,t0],axis=2)
+
+    def generate_fit(self, embedding, spec_len=None, **kwargs, ):
+        s = embedding.shape
+        amp = embedding[..., 0]
+        t0 = embedding[..., 1]
+        times = torch.arange(spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(embedding.device)
+        
+        # Constants derived from fitting acoustic pulses in water
+        sigma = 339  # width of gaussian window
+        freq = 0.0033  # central frequency of wavelet
+        angularFreq = 2 * torch.pi * freq  # convert frequency to angular units
+        
+        return amp * torch.exp((-1 * (times - t0) ** 2) / (2 * sigma ** 2)) * torch.sin(angularFreq * (times - t0))
+        
 class Fitter_AE:
     """Autoencoder-based fitter for spectroscopic data.
 
@@ -285,6 +314,7 @@ class Fitter_AE:
                 sampler=None,
                 sampler_params={},
                 collate_fn=None,
+                with_gt=True,
             ):
         self.dset = dset
         self.num_fits = num_fits
@@ -310,7 +340,7 @@ class Fitter_AE:
         self.best_train_loss = float('inf')
         self.checkpoint = None
         self._checkpoint_folder = checkpoint_folder
-        
+        self.with_gt = with_gt
     @property
     def dataloader_sampler(self): return self._dataloader_sampler   
     def configure_dataloader_sampler(self, **kwargs):
@@ -503,7 +533,7 @@ class Fitter_AE:
         """Compute all loss components"""
         loss_dict = {
             'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
-            'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0
+            'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'gt_loss': 0
         }
         
         # Compute individual losses
@@ -564,7 +594,7 @@ class Fitter_AE:
         self.encoder.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
-                               'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0}
+                               'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'gt_loss': 0}
 
         for i, (idx, x) in enumerate(tqdm(train_iterator, leave=True, total=len(train_iterator))):
             idx = idx.to(self.device).squeeze()
@@ -578,7 +608,8 @@ class Fitter_AE:
             else:
                 predicted_x, embedding, sd, mn = self.encoder(x, beta)
             
-            zero_loss = F.mse_loss(torch.tensor(self.dset.getitem_zero_dset(idx.detach().cpu().numpy())[1]).to(self.device), 
+            if self.with_gt:
+                gt_loss = F.mse_loss(torch.tensor(self.dset.getitem_zero_dset(idx.detach().cpu().numpy())[1]).to(self.device), 
                                                 predicted_x[:,0])
             
             # Process binning if needed
@@ -587,7 +618,7 @@ class Fitter_AE:
             
             # Compute losses
             loss, batch_loss_dict = self._compute_losses(embedding, x, predicted_x.sum(axis=1), loss_components, coef5)
-            batch_loss_dict['zero_loss'] = zero_loss.item()
+            if self.with_gt: batch_loss_dict['gt_loss'] = gt_loss.item()
 
             # Update accumulated losses
             for k in accumulated_loss_dict:

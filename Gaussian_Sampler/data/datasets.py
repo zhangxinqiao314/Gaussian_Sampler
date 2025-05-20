@@ -213,6 +213,29 @@ class Fake_PV_Embeddings(torch.utils.data.Dataset):
         self.device = self.model.encoder.device
         self.noise_levels = list(self.dset.h5_keys())
         
+ 
+class morlet_dataset(torch.utils.data.Dataset):
+    def __init__(self, 
+                 unscaled_data, 
+                 scaler = Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())]), **kwargs):
+        self.shape = unscaled_data.shape
+        self.unscaled_data = unscaled_data
+        self.scaled_data = scaler.fit_transform( unscaled_data.reshape(-1,self.shape[-1]) ).reshape(self.shape)
+        
+    def __len__(self): return self.unscaled_data.shape[0]
+    
+    def __getitem__(self, idx):
+        return idx, self.scaled_data[idx]
+ 
+class morlet_embeddings(torch.utils.data.Dataset):
+    def __init__(self, dset, model, checkpoint_path, **kwargs):
+        self.dset = dset
+        self.model = model
+        self.checkpoint_path = checkpoint_path
+        self.h5_name = self.model.checkpoint_folder + '/embeddings.h5'
+        self.device = self.model.encoder.device
+        self.noise_levels = list(self.dset.h5_keys())
+           
 # class Py4DSTEM_Dataset(torch.utils.data.Dataset):
 #     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
 #         '''
