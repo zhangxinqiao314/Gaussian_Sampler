@@ -24,31 +24,39 @@ class Fake_PV_viz:
         self.y_slider = pn.widgets.IntSlider(name='y', value=25, start=0, end=dset.shape[1]-1)
         self.s_slider = pn.widgets.IntSlider(name='spectral value', value=0, start=0, end=dset.shape[2]-1)
         
-        
         self.button_stream = streams.Stream.define('ButtonStream', button=False)()
         self.button = pn.widgets.Button(name='New Batch', button_type='primary')
         self.button.on_click(lambda event: self.button_stream.event(button=True))
 
-        def trigger(click): self.batch_inds = next(iter(self.sampler))
-        pn.bind(trigger, self.button_stream.param.button)
+        # def trigger(click): self.batch_inds = next(iter(self.sampler))
+        # pn.bind(trigger, self.button_stream.param.button)
         
         # Dynamic maps for the red dot and vertical line
         self.dot_dmap = hv.DynamicMap(pn.bind(self.show_dot, 
-                                              x=self.x_slider, y=self.y_slider))
+                                              x=self.x_slider.param.value_throttled, 
+                                              y=self.y_slider.param.value_throttled))
         self.vline_dmap = hv.DynamicMap(pn.bind(self.show_vline, 
-                                                s=self.s_slider))
+                                                s=self.s_slider.param.value_throttled))
 
         # Create dynamic maps for image and spectrum plots
         self.img_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_img, 
-                                              i=self.i_slider, s=self.s_slider))
+                                              i=self.i_slider.param.value_throttled, 
+                                              s=self.s_slider.param.value_throttled))
         self.img_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_img_scaled, 
-                                                     i=self.i_slider, s=self.s_slider))
+                                                     i=self.i_slider.param.value_throttled, 
+                                                     s=self.s_slider.param.value_throttled))
         self.spec_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
-                                               i=self.i_slider, x=self.x_slider, y=self.y_slider))
+                                               i=self.i_slider.param.value_throttled, 
+                                               x=self.x_slider.param.value_throttled, 
+                                               y=self.y_slider.param.value_throttled))
         self.spec_scaled_dmap = hv.DynamicMap(pn.bind(self.plot_datacube_spectrum, 
-                                                      i=self.i_slider, x=self.x_slider, y=self.y_slider))
+                                                      i=self.i_slider.param.value_throttled, 
+                                                      x=self.x_slider.param.value_throttled, 
+                                                      y=self.y_slider.param.value_throttled))
         self.zero_spec_dmap = hv.DynamicMap(pn.bind(self.plot_zero_datacube_spectrum, 
-                                                    i=self.i_slider, x=self.x_slider, y=self.y_slider))
+                                                    i=self.i_slider.param.value_throttled, 
+                                                    x=self.x_slider.param.value_throttled, 
+                                                    y=self.y_slider.param.value_throttled))
         
            
         if sampler is not None: 
@@ -75,6 +83,10 @@ class Fake_PV_viz:
         self.dset.noise_ = i # self.dset.h5_keys()[i]
         return self.dset.getitem_zero_dset(slice(0,self.dset.shape[0]*self.dset.shape[1]))[1] # 100, 100, 500
     
+    @lru_cache(maxsize=32)
+    def datacube_max(self, i):
+        return float(self.select_datacube(i).max())
+    
     ############################################ input data helpers
     
     def show_dot(self, x, y): return hv.Scatter([(x, y)]).opts( color='red', size=5, marker='o',
@@ -95,7 +107,7 @@ class Fake_PV_viz:
                     kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                     vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(
-                            cmap='viridis', colorbar=True, clim=(0, datacube.max()),
+                            cmap='viridis', colorbar=True, clim=(0, self.datacube_max(i)),
                             width=350, height=300, title=f'Noise:{self.dset_list[i]}')
     
     
@@ -107,7 +119,7 @@ class Fake_PV_viz:
                         kdims=[hv.Dimension('x', label='X Position'), hv.Dimension('y', label='Y Position')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(
-                            cmap='viridis', colorbar=True, clim=(0, datacube.max()),
+                            cmap='viridis', colorbar=True, clim=(0, self.datacube_max(i)),
                             width=350, height=300, title='Datacube Intensity')
 
     def plot_datacube_spectrum(self, i, x, y):
@@ -117,7 +129,7 @@ class Fake_PV_viz:
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(width=350, height=300,
-                                ylim=(0, datacube.max()), xlim=(0, self.dset.spec_len),
+                                ylim=(0, self.datacube_max(i)), xlim=(0, self.dset.spec_len),
                                 axiswise=True, shared_axes=False)
                         
     def plot_zero_datacube_spectrum(self, i, x, y):
@@ -127,7 +139,7 @@ class Fake_PV_viz:
                         kdims=[hv.Dimension('spectrum', label='Spectrum Value')],
                         vdims=[hv.Dimension('intensity', label='Intensity')],
                         ).opts(width=350, height=300,
-                                ylim=(0, datacube.max()), xlim=(0, self.dset.spec_len),
+                                ylim=(0, self.datacube_max(i)), xlim=(0, self.dset.spec_len),
                                 axiswise=True, shared_axes=False)
         
     def layout_input(self):
@@ -175,11 +187,11 @@ class Fake_PV_viz:
         for d,dat in enumerate(data):
             if d in checked: curve = hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
                                             color=self.colors[d], alpha=1,
-                                            ylim=(0, self.dset.maxes.max()), xlim=(0, self.dset.spec_len),
+                                            ylim=(0, max(self.dset.maxes)), xlim=(0, self.dset.spec_len),
                                             axiswise=True, shared_axes=False, line_width=1)
             else: curve = hv.Curve(dat.mean(axis=0)).opts(width=350, height=300,
                                             color=self.colors[d], alpha=0.1,
-                                            ylim=(0, self.dset.maxes.max()), xlim=(0, self.dset.spec_len),
+                                            ylim=(0, max(self.dset.maxes)), xlim=(0, self.dset.spec_len),
                                             axiswise=True, shared_axes=False, line_width=1)
             curves_list.append( curve )
             

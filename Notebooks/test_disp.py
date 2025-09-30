@@ -20,14 +20,15 @@ def plot_batch(fitter, dset, test_inds=test_inds_, noise=None):
     fig, ax = plt.subplots(int(len(test_inds)**0.5),ceil(len(test_inds)/len(test_inds)**0.5),figsize=(10,10))
     try: ax=ax.flatten()
     except: ax=[ax]
-    fig.suptitle(f'with batch norm after whole blocks: Random sampler: noise {dset.noise_}, scaling kernel size {dset.scaling_kernel_size}')
+    fig.suptitle(f'with batch norm after whole blocks: Random sampler: noise {dset.noise_}' )
+                #  f',scaling kernel size {dset.scaling_kernel_size}')
     lines = []
 
     for i,ind in enumerate(test_inds):
         a = ax[i].plot(test_batch[i].cpu().detach().numpy().flatten(), label='input')
         if i==0: lines.append(a[0])
         for f in range(out[0].shape[1]):
-            a = ax[i].plot(out[0][i,f].cpu().detach().numpy(),'-.', linewidth=0.5, label=f'fit {f}')
+            a = ax[i].plot(out[0][i,f].cpu().detach().numpy(),'-.', linewidth=1, label=f'fit {f}')
             if i==0: lines.append(a[0]) 
         a = ax[i].plot(out[0][i].sum(dim=0).cpu().detach().numpy(), 'k--', label='sum')
         if i==0: lines.append(a[0])

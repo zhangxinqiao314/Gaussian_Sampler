@@ -61,6 +61,10 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             self._scaling_kernel_size = scaling_kernel_size
             self.scaler = scaler
             self.fit_scalers()
+        
+        self.maxes = [d.max() for i,d in self] if not scaled else [1 for i in len(self.noise_levels)] # TODO: make the scaler have 1 max for each noise level
+            
+        self.zero_dset = self.getitem_zero_dset(range(self.shape[0]*self.shape[1]))[1]
 
         
     @property
@@ -146,14 +150,14 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
             scaled_data = np.array([scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
                                     for scaler,dat in zip(scalers, data)])
         return scaled_data
-       
+  
+    @staticmethod
+    def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
+     
     def unscale_data(self, unscaled_data, scaled_data):
         self.scaler.fit(unscaled_data.reshape(-1, unscaled_data.shape[-1]))
         unscaled_data = self.scaler.inverse_transform(scaled_data.reshape(-1, scaled_data.shape[-1])).reshape(scaled_data.shape)
         return unscaled_data
-
-    @staticmethod
-    def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
 
     def __len__(self): return (self.shape[0]*self.shape[1])
 
@@ -203,6 +207,8 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
 
 class Fake_PV_Embeddings(torch.utils.data.Dataset):
     def __init__(self, dset, model, checkpoint_path, **kwargs):
+        pass
+
 class Py4DSTEM_Dataset(torch.utils.data.Dataset):
     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
         '''

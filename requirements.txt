@@ -1,4 +1,5 @@
 # Requirements
+# pip install --no-deps -r requirements.txt
 scikit-learn
 PyMuPDF
 pdf2image
@@ -14,4 +15,9 @@ jupyter_bokeh
 pillow
 torch
 wandb
-distutils
+git+https://github.com/m3-learning/datafed-torchflow.git # datafed-torchflow
+pydantic
+
+#to clone
+#git+https://github.com/m3-learning/M3Learning-Util.git # M3Learning-Util
+#git+https://github.com/m3-learning/AutoPhysLearn.git@generalize-model # AutoPhysLearn
