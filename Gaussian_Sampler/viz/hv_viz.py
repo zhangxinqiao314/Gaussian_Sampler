@@ -150,14 +150,14 @@ class Fake_PV_viz:
          self.spec_dmap*self.vline_dmap*self.zero_spec_dmap).opts(shared_axes=True, axiswise=True),
                         )
 
-    ############################################Batch helpers
+    ############################################ Batch helpers
     
     def split_list(self,): # TODO: trigger if dset changes
         return [self.batch_inds[i:i + self.sampler.num_neighbors] for i in range(0, len(self.batch_inds), self.sampler.num_neighbors)]
     
     def get_points_idx(self): 
         clumps = self.split_list()
-        return [[ (int(ind / self.dset.shape[0]),ind % self.dset.shape[0]
+        return [[ (ind % self.dset.shape[0], ind // self.dset.shape[0]
                     ) for ind in clump
                 ] for clump in clumps ]
     
@@ -167,7 +167,7 @@ class Fake_PV_viz:
         return [ np.asarray([dset[ind] for ind in clump],dtype=np.float32
                          ) for clump in clumps ]
         
-    ############################################Batch plotting
+    ############################################ Batch plotting
     def plot_batch_points(self, checked):
         pts = self.get_points_idx()                                             
         scatter_list = []
