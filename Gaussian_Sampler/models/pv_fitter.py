@@ -302,6 +302,9 @@ class Fitter_AE:
                                 **encoder_params
                                 ).to(self.device).type(torch.float32)
         self.optimizer = optim.Adam( self.encoder.parameters(), lr=self.learning_rate )
+        self.sampler_params = sampler_params
+        try: self.sampler_params.pop('dset')
+        except: pass
         self.configure_dataloader_sampler(sampler=sampler, **sampler_params)
         self.configure_dataloader(collate_fn=collate_fn)
         
@@ -344,7 +347,7 @@ class Fitter_AE:
         shuffle = kwargs.get('shuffle', False)
         
         # builds the dataloader
-        if self.dataloader_sampler is None: 
+        if self.dataloader_sampler is None:
             self._dataloader = DataLoader(self.dset, batch_size=batch_size, shuffle=shuffle)
             self.binning = False
         else:
@@ -428,7 +431,7 @@ class Fitter_AE:
             'epoch': epoch,
             'loss_dict': loss_dict,
             'loss_params': kwargs,
-            'sampler': self.dataloader_sampler,
+            'sampler_params': self.sampler_params,
         }
         torch.save(checkpoint, self.checkpoint)
 
