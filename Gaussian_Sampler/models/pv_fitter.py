@@ -134,11 +134,11 @@ class pseudovoigt_1D_fitters_new():
         self.limits = limits
     
     def scale_parameters(self, embedding):
-        h = self.limits[0] * embedding[..., 0] # amplitude
+        a = self.limits[0] * embedding[..., 0] # amplitude
         E = self.limits[1] * embedding[..., 1] # mean
         F = self.limits[2] * embedding[..., 2] # fwhm
         nu = embedding[..., 3] # fraction voight character
-        return torch.stack([h,E,F,nu],axis=2)
+        return torch.stack([a,E,F,nu],axis=2)
 
     def apply_activations(self, embedding):
         '''This function takes an embedding and scales it to the limits of the parameters
@@ -185,7 +185,7 @@ class pseudovoigt_1D_fitters_new():
         lorentzian = h /(1  + 4*((x_-E)/F)**2)
         return lorentzian
 
-    def generate_fit(self, embedding, spec_len=None, **kwargs, ):
+    def generate_fit(self, embedding, spec_len, **kwargs, ):
         """Generate 1D Pseudo-Voigt profiles from embedding parameters.
 
         This function implements the Pseudo-Voigt profile as described in:
@@ -209,20 +209,18 @@ class pseudovoigt_1D_fitters_new():
         """
         device = embedding.device
         # Unpack embedding tensor along last dimension (shape: [..., 4])
-        h = embedding[..., 0].unsqueeze(-1)  # amplitude
+        a = embedding[..., 0].unsqueeze(-1)  # amplitude
         E = embedding[..., 1].unsqueeze(-1)  # mean
         F = embedding[..., 2].unsqueeze(-1)  # FWHM
         nu = embedding[..., 3].unsqueeze(-1) # Lorentzian character fraction
         
-        s = h.shape  # (_, num_fits)    
-        if spec_len is not None:
-            s = (s[0],s[1],spec_len)
+        s = a.shape  # (_, num_fits)
         
         x_ = torch.arange(spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
         
         # Calculate components
-        gaussian = self._gaussian_component(h, E, x_, F)
-        lorentzian = self._lorentzian_component(h, E, x_, F)
+        gaussian = self._gaussian_component(a, E, x_, F)
+        lorentzian = self._lorentzian_component(a, E, x_, F)
         
         # Pseudo-Voigt profile
         pseudovoigt = nu * lorentzian + (1 - nu) * gaussian
@@ -293,7 +291,7 @@ class Fitter_AE:
         self.learning_rate = learning_rate
         self.collate_fn = collate_fn
         self.encoder_params = encoder_params
-        self.encoder = encoder(function = function,
+        self.encoder = encoder( function = function,
                                 x_data = dset,
                                 input_channels = input_channels,
                                 num_fits = num_fits,
@@ -377,7 +375,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             
     
-    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False):
+    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False, primary_loss_function=F.mse_loss):
         """Train the model.
 
         Args:
@@ -404,6 +402,7 @@ class Fitter_AE:
             fill_embeddings = False # TODO: fill embeddings during training
 
             loss_dict = self.loss_function( self.dataloader,
+                                           primary_loss_function=primary_loss_function,
                                             binning=self.binning,
                                             weight_by_distance=weight_by_distance, )
             
@@ -464,9 +463,20 @@ class Fitter_AE:
             
         return 
     # Loss stuff
-    def _initialize_loss_components(self, train_iterator, coef1, coef2, coef3, coef4):
-        """Initialize loss components and their coefficients"""
+    def _initialize_loss_components(self, train_iterator, 
+                                    coef1=0, coef2=0, coef3=0, coef4=0, 
+                                    primary_loss=F.mse_loss):
+        """Initialize loss components and their coefficients
+        Args:
+            train_iterator: DataLoader for training data
+            coef1: Coefficient for weighted LN loss
+            coef2: Coefficient for contrastive loss
+            coef3: Coefficient for divergence loss
+            coef4: Coefficient for sparse max loss
+            primary_loss: Loss function for primary loss
+        """
         components = {
+            'primary': (primary_loss),
             'weighted_ln': (Weighted_LN_loss(coef=coef1, channels=self.num_fits).to(self.device) if coef1 > 0 else None),
             'contrastive': (ContrastiveLoss(coef2).to(self.device) if coef2 > 0 else None),
             'divergence': (DivergenceLoss(train_iterator.batch_size, coef3).to(self.device) if coef3 > 0 else None),
@@ -506,7 +516,7 @@ class Fitter_AE:
     def _compute_losses(self, embedding, x, predicted_x, loss_components, coef5):
         """Compute all loss components"""
         loss_dict = {
-            'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
+            'weighted_ln_loss': 0, 'primary_loss': 0, 'mae_loss': 0, 'train_loss': 0,
             'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0
         }
         
@@ -526,21 +536,21 @@ class Fitter_AE:
             losses['l2_loss'] = 0
         
         # MSE loss
-        mse_loss = F.mse_loss(x, predicted_x, reduction='mean')
-        
+        primary_loss = loss_components['primary'](x, predicted_x, reduction='mean')
+
         # Update loss dictionary
         loss_dict.update({k: v for k, v in losses.items() if v != 0})
-        loss_dict['mse_loss'] = mse_loss.item()
+        loss_dict['primary_loss'] = primary_loss.item()
         
         # Compute total loss
-        total_loss = mse_loss + losses['reg_loss_1'] + losses['contras_loss'] - losses['maxi_loss'] + losses['l2_loss']
+        total_loss = primary_loss + losses['reg_loss_1'] + losses['contras_loss'] - losses['maxi_loss'] + losses['l2_loss']
         loss_dict['train_loss'] = total_loss.item()
         
         return total_loss, loss_dict
 
-    def loss_function(self, train_iterator, coef1=0, coef2=0, coef3=0, coef4=0, coef5=0,
+    def loss_function(self, train_iterator, coef1=0, coef2=0, coef3=0, coef4=0, coef5=0, primary_loss_function=F.mse_loss,
                      ln_parm=1, beta=None, fill_embeddings=False, minibatch_logging_rate=None,
-                     binning=False, weight_by_distance=False):
+                     binning=False, weight_by_distance=False,):
         """Calculate the loss for training.
 
         Combines multiple loss components:
@@ -565,7 +575,7 @@ class Fitter_AE:
             dict: Dictionary containing different loss components and total loss
         """
         self.encoder.train()
-        loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4)
+        loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4, primary_loss=primary_loss_function)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
                                'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0}
 
@@ -581,8 +591,8 @@ class Fitter_AE:
             else:
                 predicted_x, embedding, sd, mn = self.encoder(x, beta)
             
-            zero_loss = F.mse_loss(torch.tensor(self.dset.getitem_zero_dset(idx.detach().cpu().numpy())[1]).to(self.device), 
-                                                predicted_x[:,0])
+            zero_loss = loss_components['primary'](torch.tensor(self.dset.getitem_zero_dset(idx.detach().cpu().numpy())[1]).to(self.device), 
+                                                    predicted_x[:,0])
             
             # Process binning if needed
             if binning:

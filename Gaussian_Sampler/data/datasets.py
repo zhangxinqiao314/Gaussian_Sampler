@@ -41,17 +41,19 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                  num_classes=5,
                  num_curves=3,
                  scaler=Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())]),
-                 scaling_kernel_size = 1, 
                  noise_level = 0):
         '''dset is x*y,spec_len'''
         self.save_folder = save_folder
         self.pv_fitter = pv_fitter
         # set parameters for generating PV curves
         
-        pv_param_classes={'h':[5,6,9,10], 
-                        'E':[0,100,400,500,700], 
-                        'F':[50,50,70,90,90], 
-                        'nu':[0.7,0.7,0.7,0.4,0.4]}
+        self.pv_param_classes = {
+            'a': np.random.random_integers(0, 10, (num_classes, num_curves)),
+            'E': np.random.random_integers(0, shape[-1], (num_classes, num_curves,)),
+            'F': np.random.random_integers(0, shape[-1] // 2, (num_classes, num_curves,)),
+            'nu': np.random.random((num_classes, num_curves,))
+        }
+        
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
         self.fwhm, self.nu_ = 50, 0.7
         self.shape = shape
@@ -64,7 +66,6 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         self.noise_levels = list(self.h5_keys())
         self._noise = self.noise_levels[noise_level]
         if self.scale: 
-            self._scaling_kernel_size = scaling_kernel_size
             self.scaler = scaler
             self.fit_scalers()
         
@@ -195,11 +196,11 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         '''This function takes a dictionary of parameters classes and returns a numpy array of parameters'''
         
         print('Generating data...')
-        embedding = torch.stack( [torch.tensor(x) for x in self.pv_param_classes.values()], axis=1)
-        fit = self.pv_fitter.generate_fit(embedding,spec_len=self.spec_len).squeeze().to('cpu').numpy()
-        fit = fit.repeat(20,0).repeat(20,1)
-        fit = fit.reshape(-1,self.shape[-1])*self.mask.reshape(-1,1)
-        
+        embeddings = torch.stack( [torch.tensor(x) for x in self.pv_param_classes.values()], axis=2) # shape (numclasses, numcurve, params)
+        fits = self.pv_fitter.generate_fit(embeddings,spec_len=self.spec_len)
+        fit = fits.sum(axis=1).repeat(self.mask.shape[0]//fits.shape[0],1)
+        fit = fit.squeeze().to('cpu').numpy()*self.mask.reshape(-1,1)
+        # make tile this in 100x100 square
         with self.open_h5() as f:   
             for i in tqdm(range(20)):
                 noise_ = Fake_PV_Dataset.noise(i)
