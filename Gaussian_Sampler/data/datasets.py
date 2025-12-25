@@ -55,7 +55,6 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         }
         
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
-        self.fwhm, self.nu_ = 50, 0.7
         self.shape = shape
         self.spec_len = self.shape[-1]
         # self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
@@ -198,7 +197,8 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         print('Generating data...')
         embeddings = torch.stack( [torch.tensor(x) for x in self.pv_param_classes.values()], axis=2) # shape (numclasses, numcurve, params)
         fits = self.pv_fitter.generate_fit(embeddings,spec_len=self.spec_len)
-        fit = fits.sum(axis=1).repeat(self.mask.shape[0]//fits.shape[0],1)
+        fits = fits.sum(axis=1)
+        .repeat(int(self.mask.shape[0]**.5//fits.shape[0]),1).repeat(int(self.mask.shape[0]**.5//fits.shape[0]),1)
         fit = fit.squeeze().to('cpu').numpy()*self.mask.reshape(-1,1)
         # make tile this in 100x100 square
         with self.open_h5() as f:   

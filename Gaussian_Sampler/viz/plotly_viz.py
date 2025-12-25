@@ -18,9 +18,11 @@ class Fake_PV_viz:
 
         # Create interactive widgets
         self.i_slider = widgets.IntSlider(description='Noise std', value=0, min=0, max=len(self.dset_list)-1)
-        self.x_slider = widgets.IntSlider(description='x', value=25, min=0, max=dset.shape[0]-1)
-        self.y_slider = widgets.IntSlider(description='y', value=25, min=0, max=dset.shape[1]-1)
         self.s_slider = widgets.IntSlider(description='spectral', value=0, min=0, max=dset.shape[2]-1)
+        
+        # x and y are now set by clicking on the plot
+        self.x = 25
+        self.y = 25
 
         # Create FigureWidgets for interactive updates
         self.img_fig = go.FigureWidget()
@@ -54,7 +56,7 @@ class Fake_PV_viz:
 
     def plot_datacube_img(self, i, s, x, y):
         datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = np.flipud(datacube[:, :, s])
+        data_ = datacube[:, :, s]
 
         fig = go.Figure()
         fig.add_trace(go.Heatmap(
@@ -63,13 +65,13 @@ class Fake_PV_viz:
         ))
         # Add red dot for selected position
         fig.add_trace(go.Scatter(
-            x=[x], y=[self.dset.shape[1] - 1 - y], mode='markers',
+            x=[x], y=[y], mode='markers',
             marker=dict(color='red', size=10), name='Selected'
         ))
         fig.update_layout(
             title=f'Noise: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
-            width=400, height=350
+            width=400, height=400
         )
         return fig
 
@@ -88,21 +90,22 @@ class Fake_PV_viz:
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
             yaxis=dict(range=[0, self.datacube_max(i)]),
             xaxis=dict(range=[0, self.dset.spec_len]),
-            width=400, height=350
+            width=400, height=400
         )
         return fig
 
     def _update_plots(self, change=None):
-        i, s, x, y = self.i_slider.value, self.s_slider.value, self.x_slider.value, self.y_slider.value
+        i, s = self.i_slider.value, self.s_slider.value
+        x, y = self.x, self.y
         
         # Update image
         datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = np.flipud(datacube[:, :, s])
+        data_ = datacube[:, :, s]
         with self.img_fig.batch_update():
             self.img_fig.data[0].z = data_
             self.img_fig.data[0].zmax = self.datacube_max(i)
             self.img_fig.data[1].x = [x]
-            self.img_fig.data[1].y = [self.dset.shape[1] - 1 - y]
+            self.img_fig.data[1].y = [y]
             self.img_fig.layout.title.text = f'Noise: {self.dset_list[i]}'
 
         # Update spectrum
@@ -115,11 +118,27 @@ class Fake_PV_viz:
             self.spec_fig.layout.shapes[0].x1 = s
             self.spec_fig.layout.yaxis.range = [0, self.datacube_max(i)]
 
+    def _handle_click(self, trace, points, selector):
+        """Handle click on image plot to set x and y coordinates"""
+        if points.xs and points.ys:
+            # For heatmap, get the actual data coordinates
+            x_clicked = points.xs[0]
+            y_clicked = points.ys[0]
+            # Round to nearest integer for array indexing
+            self.x = int(round(x_clicked))
+            self.y = int(round(y_clicked))
+            # Clamp to valid range
+            self.x = max(0, min(self.x, self.dset.shape[0] - 1))
+            self.y = max(0, min(self.y, self.dset.shape[1] - 1))
+            # Update plots
+            self._update_plots()
+    
     def _init_figures(self):
-        i, s, x, y = self.i_slider.value, self.s_slider.value, self.x_slider.value, self.y_slider.value
+        i, s = self.i_slider.value, self.s_slider.value
+        x, y = self.x, self.y
         datacube = self.select_datacube(i).reshape(self.dset.shape)
         zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-        data_ = np.flipud(datacube[:, :, s])
+        data_ = datacube[:, :, s]
 
         # Image figure
         self.img_fig.add_trace(go.Heatmap(
@@ -127,13 +146,15 @@ class Fake_PV_viz:
             colorbar=dict(title='Intensity')
         ))
         self.img_fig.add_trace(go.Scatter(
-            x=[x], y=[self.dset.shape[1] - 1 - y], mode='markers',
+            x=[x], y=[y], mode='markers',
             marker=dict(color='red', size=10), name='Selected'
         ))
+        # Add click handler to the heatmap
+        self.img_fig.data[0].on_click(self._handle_click)
         self.img_fig.update_layout(
             title=f'Noise: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
-            width=400, height=350
+            width=400, height=400
         )
 
         # Spectrum figure
@@ -144,19 +165,19 @@ class Fake_PV_viz:
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
             yaxis=dict(range=[0, self.datacube_max(i)]),
             xaxis=dict(range=[0, self.dset.spec_len]),
-            width=400, height=350
+            width=400, height=400
         )
 
     def layout_input(self):
         self._init_figures()
         
-        # Connect widgets to update function
-        for slider in [self.i_slider, self.x_slider, self.y_slider, self.s_slider]:
+        # Connect widgets to update function (only i and s sliders now)
+        for slider in [self.i_slider, self.s_slider]:
             slider.observe(self._update_plots, names='value')
 
         sliders = widgets.VBox([
             widgets.HBox([self.i_slider, self.s_slider]),
-            widgets.HBox([self.x_slider, self.y_slider])
+            widgets.HTML(value='<i>Click on the image to select x, y coordinates</i>')
         ])
         plots = widgets.HBox([self.img_fig, self.spec_fig])
         return widgets.VBox([sliders, plots])
@@ -185,7 +206,7 @@ class Fake_PV_viz:
 
     def plot_batch_points(self, i, s, checked):
         datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = np.flipud(datacube[:, :, s])
+        data_ = datacube[:, :, s]
         pts = self.get_points_idx()
 
         fig = go.Figure()
@@ -195,17 +216,16 @@ class Fake_PV_viz:
         ))
         for p, pt in enumerate(pts):
             xs, ys = zip(*pt) if pt else ([], [])
-            ys_flipped = [self.dset.shape[1] - 1 - y for y in ys]
             alpha = 1.0 if p in checked else 0.2
             fig.add_trace(go.Scatter(
-                x=xs, y=ys_flipped, mode='markers',
+                x=xs, y=ys, mode='markers',
                 marker=dict(color=self.colors[p % len(self.colors)], size=6, opacity=alpha),
                 name=f'Batch {p}'
             ))
         fig.update_layout(
             title=f'Noise: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
-            width=450, height=400
+            width=450, height=450
         )
         return fig
 
@@ -223,7 +243,7 @@ class Fake_PV_viz:
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
             yaxis=dict(range=[0, max(self.dset.maxes)]),
             xaxis=dict(range=[0, self.dset.spec_len]),
-            width=450, height=400
+            width=450, height=450
         )
         return fig
 
@@ -234,7 +254,7 @@ class Fake_PV_viz:
         
         # Update batch image
         datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = np.flipud(datacube[:, :, s])
+        data_ = datacube[:, :, s]
         pts = self.get_points_idx()
         
         with self.batch_img_fig.batch_update():
@@ -243,9 +263,8 @@ class Fake_PV_viz:
             for p, pt in enumerate(pts):
                 if p + 1 < len(self.batch_img_fig.data):
                     xs, ys = zip(*pt) if pt else ([], [])
-                    ys_flipped = [self.dset.shape[1] - 1 - y for y in ys]
                     self.batch_img_fig.data[p + 1].x = xs
-                    self.batch_img_fig.data[p + 1].y = ys_flipped
+                    self.batch_img_fig.data[p + 1].y = ys
                     self.batch_img_fig.data[p + 1].opacity = 1.0 if p in checked else 0.2
 
         # Update batch spectrum
@@ -262,7 +281,7 @@ class Fake_PV_viz:
         checked = list(self.batch_checkboxes.value)
         
         datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = np.flipud(datacube[:, :, s])
+        data_ = datacube[:, :, s]
         pts = self.get_points_idx()
 
         self.batch_img_fig = go.FigureWidget()
@@ -272,17 +291,16 @@ class Fake_PV_viz:
         ))
         for p, pt in enumerate(pts):
             xs, ys = zip(*pt) if pt else ([], [])
-            ys_flipped = [self.dset.shape[1] - 1 - y for y in ys]
             alpha = 1.0 if p in checked else 0.2
             self.batch_img_fig.add_trace(go.Scatter(
-                x=xs, y=ys_flipped, mode='markers',
+                x=xs, y=ys, mode='markers',
                 marker=dict(color=self.colors[p % len(self.colors)], size=6),
                 opacity=alpha, name=f'Batch {p}'
             ))
         self.batch_img_fig.update_layout(
             title=f'Noise: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
-            width=450, height=400
+            width=450, height=450
         )
 
         # Batch spectrum
@@ -299,7 +317,7 @@ class Fake_PV_viz:
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
             yaxis=dict(range=[0, max(self.dset.maxes)]),
             xaxis=dict(range=[0, self.dset.spec_len]),
-            width=450, height=400
+            width=450, height=450
         )
 
     def layout_batch(self):
@@ -312,7 +330,6 @@ class Fake_PV_viz:
 
         sliders = widgets.VBox([
             widgets.HBox([self.i_slider, self.s_slider]),
-            widgets.HBox([self.x_slider, self.y_slider]),
             widgets.HBox([self.batch_checkboxes, self.new_batch_button])
         ])
         plots = widgets.HBox([self.batch_img_fig, self.batch_spec_fig])
