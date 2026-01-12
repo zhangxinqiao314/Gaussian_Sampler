@@ -191,15 +191,36 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     
     def h5_keys(self): return list(self.open_h5().keys())
     
+    def create_concentric_circles(self, fits):
+        """Create filled concentric circles where each ring corresponds to a class from fits."""
+        # Convert to torch if needed
+        if not isinstance(fits, torch.Tensor):
+            fits = torch.tensor(fits)
+        
+        n, m, s = self.shape
+        numclasses = fits.shape[0]
+        device = fits.device
+        dtype = fits.dtype
+        
+        y, x = torch.meshgrid(torch.arange(n, device=device), torch.arange(m, device=device), indexing='ij')
+        r = torch.sqrt((x - m/2)**2 + (y - n/2)**2)
+        max_r = torch.sqrt(torch.tensor((n/2)**2 + (m/2)**2, device=device))
+        # Use 90% of max radius so circles don't touch edges
+        circle_radius = max_r * 0.75
+        ring_idx = torch.clamp((r / circle_radius * numclasses).long(), 0, numclasses - 1)
+        # Set pixels outside the outermost circle to 0
+        mask = r <= circle_radius
+        result = fits[ring_idx] * mask.unsqueeze(-1)
+        return result
+    
     def generate_pv_data(self):
         '''This function takes a dictionary of parameters classes and returns a numpy array of parameters'''
         
         print('Generating data...')
-        embeddings = torch.stack( [torch.tensor(x) for x in self.pv_param_classes.values()], axis=2) # shape (numclasses, numcurve, params)
+        embeddings = torch.stack( [torch.tensor(x) for x in self.pv_param_classes.values()], axis=2) # shape (numclasses, numcurves, params)
         fits = self.pv_fitter.generate_fit(embeddings,spec_len=self.spec_len)
         fits = fits.sum(axis=1)
-        .repeat(int(self.mask.shape[0]**.5//fits.shape[0]),1).repeat(int(self.mask.shape[0]**.5//fits.shape[0]),1)
-        fit = fit.squeeze().to('cpu').numpy()*self.mask.reshape(-1,1)
+        fit = self.create_concentric_circles(fits).reshape(self.shape[0]*self.shape[1], -1)
         # make tile this in 100x100 square
         with self.open_h5() as f:   
             for i in tqdm(range(20)):
