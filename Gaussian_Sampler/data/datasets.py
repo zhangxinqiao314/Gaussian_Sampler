@@ -102,10 +102,27 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         y = nu*lorentz + (1-nu)*gauss
         return y
 
-    def add_noise(self,I,y,noise=0.1,):
-        noise = np.random.normal(0, noise*(I), [self.shape[0]*self.shape[1],self.shape[-1]]) # make some noise even if 0
-        noisy = y + noise
-        noisy[noisy<0] = 0
+    def add_noise(self,y,noise=0.1,):
+        # Treat zero noise curve as probability distribution and use dropout to randomly sample
+        # Normalize to create probability distribution (avoid division by zero)
+        y_sum = y.sum(axis=-1, keepdims=True)
+        y_normalized = y / (y_sum + 1e-10)
+        
+        # Use dropout: fraction of points kept is 1/noise (noise range: 0-20)
+        # noise=0: keep all points (keep_prob=1.0)
+        # noise=1: keep 1/1 = 100% of points
+        # noise=2: keep 1/2 = 50% of points
+        # noise=20: keep 1/20 = 5% of points
+        if noise == 0: keep_prob = 1.0
+        else: keep_prob = 1.0 / noise *y_normalized
+        
+        # Sample from the probability distribution with dropout
+        dropout_mask = np.random.binomial(1, keep_prob, size=y.shape)
+        
+        # Apply dropout and renormalize to preserve total intensity
+        noisy = y * dropout_mask
+        # Renormalize to maintain the same total intensity as original
+        noisy = noisy * (y_sum / (noisy.sum(axis=-1, keepdims=True) + 1e-10))
         return noisy
     
     def fit_scalers(self):
@@ -228,7 +245,7 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                 try: del f[f'{noise_:06.3f}_noise']
                 except: pass
                 dset = f.create_dataset(f'{noise_:06.3f}_noise', 
-                                        data = self.add_noise(I = fit.max(), y=fit, noise=noise_),
+                                        data = self.add_noise(y=fit, noise=noise_),
                                         dtype=np.float32)
                 
                 f.flush()
