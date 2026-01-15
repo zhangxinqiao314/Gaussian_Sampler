@@ -143,7 +143,7 @@ class pseudovoigt_1D_fitters_new():
     def apply_activations(self, embedding):
         '''This function takes an embedding and scales it to the limits of the parameters
         
-        This function implements the Pseudo-Voigt profile as described in:
+        This function implements the Pseudo-Voigt profile as described in: (but not exactly anymore)
         https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
         
         Args:

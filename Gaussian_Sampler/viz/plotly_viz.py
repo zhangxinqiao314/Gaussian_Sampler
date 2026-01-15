@@ -6,7 +6,7 @@ import ipywidgets as widgets
 from IPython.display import display
 
 
-class Fake_PV_viz:
+class Poisson_Sampled_PV_viz:
     '''Interactive visualization using Plotly and ipywidgets'''
     
     def __init__(self, dset, sampler=None):
@@ -17,7 +17,7 @@ class Fake_PV_viz:
                        'magenta', 'cyan', 'purple', 'lime', 'teal', 'maroon', 'indigo', 'gold']
 
         # Create interactive widgets
-        self.i_slider = widgets.IntSlider(description='Noise std', value=0, min=0, max=len(self.dset_list)-1)
+        self.i_slider = widgets.IntSlider(description='Sampled rate', value=0, min=0, max=len(self.dset_list)-1)
         self.s_slider = widgets.IntSlider(description='spectral', value=0, min=0, max=dset.shape[2]-1)
         
         # x and y are now set by clicking on the plot
@@ -37,15 +37,18 @@ class Fake_PV_viz:
             self.batch_inds = next(iter(self.sampler))
             self.new_batch_button = widgets.Button(description='New Batch')
             self.new_batch_button.on_click(self._new_batch)
+            # Separate coordinates for batch visualization
+            self.batch_x = 25
+            self.batch_y = 25
 
     @lru_cache(maxsize=10)
     def select_datacube(self, i):
-        self.dset.noise_ = i
+        self.dset.dset_name = i
         return self.dset[:][1]
 
     @lru_cache(maxsize=10)
     def select_zero_datacube(self, i):
-        self.dset.noise_ = i
+        self.dset.dset_name = i
         return self.dset.getitem_zero_dset(slice(0, self.dset.shape[0] * self.dset.shape[1]))[1]
 
     @lru_cache(maxsize=32)
@@ -69,7 +72,7 @@ class Fake_PV_viz:
             marker=dict(color='red', size=10), name='Selected'
         ))
         fig.update_layout(
-            title=f'Noise: {self.dset_list[i]}',
+            title=f'Sampled rate: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
             width=400, height=400
         )
@@ -106,7 +109,7 @@ class Fake_PV_viz:
             self.img_fig.data[0].zmax = self.datacube_max(i)
             self.img_fig.data[1].x = [x]
             self.img_fig.data[1].y = [y]
-            self.img_fig.layout.title.text = f'Noise: {self.dset_list[i]}'
+            self.img_fig.layout.title.text = f'Sampled rate: {self.dset_list[i]}'
 
         # Update spectrum
         datacube = self.select_datacube(i).reshape(self.dset.shape)
@@ -133,6 +136,17 @@ class Fake_PV_viz:
             # Update plots
             self._update_plots()
     
+    def _handle_spectrum_click(self, trace, points, selector):
+        """Handle click on spectrum plot to set spectral index"""
+        if points.xs:
+            # Get the x-coordinate (spectral index)
+            s_clicked = points.xs[0]
+            # Round to nearest integer and clamp to valid range
+            s_new = int(round(s_clicked))
+            s_new = max(0, min(s_new, self.dset.shape[2] - 1))
+            # Update the slider value, which will trigger _update_plots
+            self.s_slider.value = s_new
+    
     def _init_figures(self):
         i, s = self.i_slider.value, self.s_slider.value
         x, y = self.x, self.y
@@ -152,7 +166,7 @@ class Fake_PV_viz:
         # Add click handler to the heatmap
         self.img_fig.data[0].on_click(self._handle_click)
         self.img_fig.update_layout(
-            title=f'Noise: {self.dset_list[i]}',
+            title=f'Sampled rate: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
             width=400, height=400
         )
@@ -161,6 +175,9 @@ class Fake_PV_viz:
         self.spec_fig.add_trace(go.Scatter(y=datacube[y, x], mode='lines', name='Noisy', line=dict(color='blue')))
         self.spec_fig.add_trace(go.Scatter(y=zero_datacube[y, x], mode='lines', name='Clean', line=dict(color='green')))
         self.spec_fig.add_vline(x=s, line=dict(color='black', width=2))
+        # Add click handler to spectrum traces
+        self.spec_fig.data[0].on_click(self._handle_spectrum_click)
+        self.spec_fig.data[1].on_click(self._handle_spectrum_click)
         self.spec_fig.update_layout(
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
             yaxis=dict(range=[0, self.datacube_max(i)]),
@@ -201,6 +218,21 @@ class Fake_PV_viz:
     def _new_batch(self, b):
         self.batch_inds = next(iter(self.sampler))
         self._update_batch_plots()
+    
+    def _handle_batch_click(self, trace, points, selector):
+        """Handle click on batch image plot to set batch x and y coordinates"""
+        if points.xs and points.ys:
+            # For heatmap, get the actual data coordinates
+            x_clicked = points.xs[0]
+            y_clicked = points.ys[0]
+            # Round to nearest integer for array indexing
+            self.batch_x = int(round(x_clicked))
+            self.batch_y = int(round(y_clicked))
+            # Clamp to valid range
+            self.batch_x = max(0, min(self.batch_x, self.dset.shape[1] - 1))
+            self.batch_y = max(0, min(self.batch_y, self.dset.shape[0] - 1))
+            # Update batch plots
+            self._update_batch_plots()
 
     ############################################ Batch plotting
 
@@ -223,7 +255,7 @@ class Fake_PV_viz:
                 name=f'Batch {p}'
             ))
         fig.update_layout(
-            title=f'Noise: {self.dset_list[i]}',
+            title=f'Sampled rate: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
             width=450, height=450
         )
@@ -261,21 +293,42 @@ class Fake_PV_viz:
             self.batch_img_fig.data[0].z = data_
             self.batch_img_fig.data[0].zmax = self.datacube_max(i)
             for p, pt in enumerate(pts):
-                if p + 1 < len(self.batch_img_fig.data):
+                if p + 1 < len(self.batch_img_fig.data) - 1:  # -1 for clicked point marker
                     xs, ys = zip(*pt) if pt else ([], [])
                     self.batch_img_fig.data[p + 1].x = xs
                     self.batch_img_fig.data[p + 1].y = ys
                     self.batch_img_fig.data[p + 1].opacity = 1.0 if p in checked else 0.2
+            # Update clicked point marker (last trace)
+            if len(self.batch_img_fig.data) > len(pts) + 1:
+                self.batch_img_fig.data[-1].x = [self.batch_x]
+                self.batch_img_fig.data[-1].y = [self.batch_y]
 
         # Update batch spectrum
         data = self.get_points_data(i)
+        zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
+        clicked_zero_spectrum = zero_datacube[self.batch_y, self.batch_x]
+        
         with self.batch_spec_fig.batch_update():
+            num_batches = len(data)
             for d, dat in enumerate(data):
-                if d < len(self.batch_spec_fig.data):
+                if d < num_batches:
                     self.batch_spec_fig.data[d].y = dat.mean(axis=0)
                     self.batch_spec_fig.data[d].opacity = 1.0 if d in checked else 0.2
+            # Update clicked point spectrum (clean only, last trace)
+            if len(self.batch_spec_fig.data) >= num_batches + 1:
+                self.batch_spec_fig.data[num_batches].y = clicked_zero_spectrum
+            # Update vertical line position
+            if self.batch_spec_fig.layout.shapes:
+                self.batch_spec_fig.layout.shapes[0].x0 = s
+                self.batch_spec_fig.layout.shapes[0].x1 = s
 
     def _init_batch_figures(self):
+        # Initialize batch coordinates if they don't exist
+        if not hasattr(self, 'batch_x'):
+            self.batch_x = 25
+        if not hasattr(self, 'batch_y'):
+            self.batch_y = 25
+            
         i = self.i_slider.value
         s = self.s_slider.value
         checked = list(self.batch_checkboxes.value)
@@ -292,15 +345,27 @@ class Fake_PV_viz:
         for p, pt in enumerate(pts):
             xs, ys = zip(*pt) if pt else ([], [])
             alpha = 1.0 if p in checked else 0.2
-            self.batch_img_fig.add_trace(go.Scatter(
+            scatter_trace = go.Scatter(
                 x=xs, y=ys, mode='markers',
                 marker=dict(color=self.colors[p % len(self.colors)], size=6),
-                opacity=alpha, name=f'Batch {p}'
-            ))
+                opacity=alpha, name=f'{p}'
+            )
+            self.batch_img_fig.add_trace(scatter_trace)
+            # Add click handler to each batch point scatter trace
+            self.batch_img_fig.data[-1].on_click(self._handle_batch_click)
+        # Add red marker for clicked point
+        self.batch_img_fig.add_trace(go.Scatter(
+            x=[self.batch_x], y=[self.batch_y], mode='markers',
+            marker=dict(color='red', size=10), name='Selected'
+        ))
+        # Add click handler to the heatmap and red marker
+        self.batch_img_fig.data[0].on_click(self._handle_batch_click)
+        self.batch_img_fig.data[-1].on_click(self._handle_batch_click)
         self.batch_img_fig.update_layout(
-            title=f'Noise: {self.dset_list[i]}',
+            title=f'Sampled rate: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
-            width=450, height=450
+            width=450, height=450,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
         )
 
         # Batch spectrum
@@ -311,13 +376,22 @@ class Fake_PV_viz:
             self.batch_spec_fig.add_trace(go.Scatter(
                 y=dat.mean(axis=0), mode='lines',
                 line=dict(color=self.colors[d % len(self.colors)], width=1),
-                opacity=alpha, name=f'Batch {d}'
+                opacity=alpha, name=f'{d}'
             ))
+        # Add clicked point spectrum (clean only)
+        zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
+        clicked_zero_spectrum = zero_datacube[self.batch_y, self.batch_x]
+        self.batch_spec_fig.add_trace(go.Scatter(
+            y=clicked_zero_spectrum, mode='lines', name='Clean', line=dict(color='red')
+        ))
+        # Vertical line at spectral position
+        self.batch_spec_fig.add_vline(x=s, line=dict(color='black', width=2))
         self.batch_spec_fig.update_layout(
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
             yaxis=dict(range=[0, max(self.dset.maxes)]),
             xaxis=dict(range=[0, self.dset.spec_len]),
-            width=450, height=450
+            width=450, height=450,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
         )
 
     def layout_batch(self):

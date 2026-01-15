@@ -9,8 +9,8 @@ test_inds_= [10,923,2346,3456,5873,7889,8245,9357,9795]
 # batch = next(iter(fitter.dataloader))
 # print(batch[1].shape)
 
-def_db_tensor_imshow(data):
-    plt.imshow()
+# def_db_tensor_imshow(data):
+#     plt.imshow()
 
 def plot_batch(fitter, dset, test_inds=test_inds_, noise=None):
     fitter.encoder.eval()

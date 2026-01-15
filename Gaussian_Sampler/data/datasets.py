@@ -7,8 +7,11 @@ from torch.autograd import Variable
 import dask.array as da        
 from tqdm import tqdm
 import h5py 
+import joblib
+import io
+import os
 
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 
@@ -32,7 +35,7 @@ def draw_m_in_array(size_=100):
     return arr_
 
 
-class Fake_PV_Dataset(torch.utils.data.Dataset):
+class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading scaler/param classes if it exists, TODO: getitem unscaled dataset
     def __init__(self, scaled=False, 
                  shape=[100,100,500], 
                  save_folder='./', 
@@ -40,10 +43,11 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
                  pv_fitter=None,
                  num_classes=5,
                  num_curves=3,
-                 scaler=Pipeline([('scaler', StandardScaler()), ('minmax', MinMaxScaler())]),
-                 noise_level = 0):
+                 scaler=Pipeline([('scaler', MinMaxScaler()),
+                                  ('minmax', MinMaxScaler())]),
+                 dset_num = 0):
         '''dset is x*y,spec_len'''
-        self.save_folder = save_folder
+        self.save_folder = os.makedirs(save_folder, exist_ok=True)
         self.pv_fitter = pv_fitter
         # set parameters for generating PV curves
         
@@ -55,125 +59,52 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         }
         
         self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
+        self._dset_name = f'{1:06.3f}_sample_rate'
         self.shape = shape
         self.spec_len = self.shape[-1]
         # self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
         self.mask = draw_m_in_array(self.shape[0]).flatten()
+        self.scaler = scaler
+        # self.scaler_list = [scaler.copy() for _ in range(len(noise_levels))]
+        # Fit scaler to 0-noise data so all noisy data uses the same scaling parameters
         if overwrite: self.generate_pv_data()
         
-        self.scale = scaled
-        self.noise_levels = list(self.h5_keys())
-        self._noise = self.noise_levels[noise_level]
-        if self.scale: 
-            self.scaler = scaler
-            self.fit_scalers()
-        
-        self.maxes = [d.max() for i,d in self] if not scaled else [1 for i in len(self.noise_levels)] # TODO: make the scaler have 1 max for each noise level
-            
+        self.dset_names = list(self.h5_keys())
+        self._noise = self.dset_names[dset_num]
         self.zero_dset = self.getitem_zero_dset(range(self.shape[0]*self.shape[1]))[1]
-
+        self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         
     @property
-    def noise_(self): return self._noise
-    @noise_.setter
-    def noise_(self, i):
-        old_noise = self._noise
-        self._noise = self.h5_keys()[i] if isinstance(i, int) else i
-        if old_noise != self._noise and self.scale: self.fit_scalers()
+    def dset_name(self): return self._dset_name
+    @dset_name.setter
+    def dset_name(self, i):
+        old_dset_name = self._dset_name
+        self._dset_name = self.dset_names[i] if isinstance(i, int) else i
             
-    @property
-    def scaling_kernel_size(self): return self._scaling_kernel_size
-    @scaling_kernel_size.setter
-    def scaling_kernel_size(self, i):
-        old_scaling_kernel_size = self._scaling_kernel_size
-        self._scaling_kernel_size = i
-        if old_scaling_kernel_size != self._scaling_kernel_size and self.scale:
-            self.fit_scalers()
-            
-    @staticmethod
-    def noise(i): 
-        # return (i/20)**(1.5)
-        return i/20
+    def low_signal(self,y, sample_rate=1):
+        """
+        Simulate low-signal measurement with Poisson statistics.
+        """
+        # Reduce signal intensity (simulating short exposure/weak source)
+        reduced = 1 + y * sample_rate
+        
+        if sample_rate == 1: return reduced
+        else: return torch.poisson(torch.clamp(reduced, min=1e-10))
     
-    def write_pseudovoight(self,A,x,w=5,nu=0.25,):
-        x_ = np.linspace(0,self.shape[-1]-1,self.shape[-1])
-        lorentz = A*( nu*2/np.pi*w/(4*(x-x_)**2 + w**2) )
-        gauss = A * (4*np.log(2)/np.pi**0.5 /w) * np.exp(-4*np.log(2)*(x-x_)**2/w**2)
-        y = nu*lorentz + (1-nu)*gauss
-        return y
+    
+    def fit_scaler(self, data, data_0):
+        if self.scaler is not None:
+            # self.scaler_list[self.noise_levels.index(self.noise_)]['scaler'].fit(self[:].reshape(-1, self.shape[-1]).T)
+            # self.scaler_list[self.noise_levels.index(self.noise_)]['minmax'].fit(self.zero_dset.reshape(-1, self.zero_dset.shape[-1]).T)
+            self.scaler.fit(data)
+            # self.scaler['scaler'].fit(data)
+            # self.scaler['minmax'].fit(data_0)
+        
+    def scale_data(self,data): 
+        if self.scaler is None: return data
+        return self.scaler.transform(data)
 
-    def add_noise(self,y,noise=0.1,):
-        # Treat zero noise curve as probability distribution and use dropout to randomly sample
-        # Normalize to create probability distribution (avoid division by zero)
-        y_sum = y.sum(axis=-1, keepdims=True)
-        y_normalized = y / (y_sum + 1e-10)
-        
-        # Use dropout: fraction of points kept is 1/noise (noise range: 0-20)
-        # noise=0: keep all points (keep_prob=1.0)
-        # noise=1: keep 1/1 = 100% of points
-        # noise=2: keep 1/2 = 50% of points
-        # noise=20: keep 1/20 = 5% of points
-        if noise == 0: keep_prob = 1.0
-        else: keep_prob = 1.0 / noise *y_normalized
-        
-        # Sample from the probability distribution with dropout
-        dropout_mask = np.random.binomial(1, keep_prob, size=y.shape)
-        
-        # Apply dropout and renormalize to preserve total intensity
-        noisy = y * dropout_mask
-        # Renormalize to maintain the same total intensity as original
-        noisy = noisy * (y_sum / (noisy.sum(axis=-1, keepdims=True) + 1e-10))
-        return noisy
     
-    def fit_scalers(self):
-        ''' scales pixel of data using a kernel of size kernel_size
-        args:
-            kernel_size: size of the kernel to use for scaling
-            scalers: list of scalers to use for scaling
-        returns:
-            data: scaled data
-        '''
-        if self.scaling_kernel_size%2 == 0: 
-            raise ValueError('kernel_size must be odd')
-        if self.scaling_kernel_size > self.shape[0] or self.scaling_kernel_size > self.shape[1]: 
-            raise ValueError('kernel_size must be less than the shape of the data')
-        
-        self.kernel_scalers = []
-        with self.open_h5() as f:
-            if self.scaling_kernel_size==1:
-                for dat in tqdm(f[self.noise_], desc=f"Fitting scalers for {self.noise_}, kernel size {self.scaling_kernel_size}"):
-                    new_scaler = clone(self.scaler)
-                    self.kernel_scalers.append( new_scaler.fit(dat.reshape(-1, 1)) )
-            else:
-                for idx in tqdm(range(self.shape[0]*self.shape[1]), desc=f'Fitting scalers for {self.noise_}, kernel size {self.scaling_kernel_size}'):
-                    x_ = idx//self.shape[1]
-                    y_ = idx%self.shape[1]
-                    
-                    # Calculate valid kernel boundaries
-                    x_start = max(0, x_-self.scaling_kernel_size//2)
-                    x_end = min(self.shape[1], x_+self.scaling_kernel_size//2+1)
-                    y_start = max(0, y_-self.scaling_kernel_size//2)
-                    y_end = min(self.shape[0], y_+self.scaling_kernel_size//2+1)
-                    
-                    # Calculate flattened indices for the kernel region
-                    points = [y*self.shape[1]+x for y in range(y_start,y_end) for x in range(x_start, x_end)]
-                    data = f[self.noise_][points]
-                    new_scaler = clone(self.scaler)
-                    self.kernel_scalers.append(new_scaler.fit(data.reshape(-1, 1)))
- 
-    def scale_data(self, data, idx):
-        if isinstance(idx, int):
-            scaled_data = self.kernel_scalers[idx].transform(data.reshape(-1, 1)).reshape(data.shape)
-        elif isinstance(idx, slice):
-            scalers = [self.kernel_scalers[i] for i in range(*idx.indices(len(self.kernel_scalers)))]
-            scaled_data = np.array([ scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
-                                     for scaler,dat in zip(scalers, data) ])
-        else:
-            scalers = [self.kernel_scalers[i] for i in idx]
-            scaled_data = np.array([scaler.transform(dat.reshape(-1, 1)).reshape(dat.shape) \
-                                    for scaler,dat in zip(scalers, data)])
-        return scaled_data
-  
     @staticmethod
     def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
      
@@ -187,26 +118,22 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         # idx=7889
         with self.open_h5() as f:
-            try: data = np.array([f[self.noise_][i] for i in idx])
-            except: data = f[self.noise_][idx]
-            
-            if self.scale: data = self.scale_data(data, idx)
-            
+            try: data = np.array([f['scaled'][self.dset_name][i] for i in idx])
+            except: data = f['scaled'][self.dset_name][idx]
+
             return idx, data
         
     def getitem_zero_dset(self,idx):
         # idx=7889
         with self.open_h5() as f:
-            try: data = np.array([f[self.noise_levels[0]][i] for i in idx])
-            except: data = f[self.noise_levels[0]][idx]
-            
-            if self.scale: data = self.scale_data(data, idx)
+            try: data = np.array([f['scaled'][self.dset_names[0]][i] for i in idx])
+            except: data = f['scaled'][self.dset_names[0]][idx]
             
             return idx,data
     
     def open_h5(self): return h5py.File(self.h5_name, 'a')
     
-    def h5_keys(self): return list(self.open_h5().keys())
+    def h5_keys(self): return list(self.open_h5()['scaled'].keys())
     
     def create_concentric_circles(self, fits):
         """Create filled concentric circles where each ring corresponds to a class from fits."""
@@ -239,14 +166,48 @@ class Fake_PV_Dataset(torch.utils.data.Dataset):
         fits = fits.sum(axis=1)
         fit = self.create_concentric_circles(fits).reshape(self.shape[0]*self.shape[1], -1)
         # make tile this in 100x100 square
-        with self.open_h5() as f:   
+        with self.open_h5() as f:
+            # write pv curve generation parameters to h5 file unscaled group
+            try: f.create_group('unscaled')
+            except: pass
+            for k,v in self.pv_param_classes.items():
+                f['unscaled'].attrs[k] = v
+            
+            # write scaler to h5 file scaled group
+            try: f.create_group('scaled')
+            except: pass
+            buf = io.BytesIO()
+            joblib.dump(self.scaler, buf)
+            buf.seek(0)
+            f['scaled'].attrs["scaler_joblib"] = np.void(buf.read())
+            f['scaled'].attrs["sklearn_version"] = __import__("sklearn").__version__
+
             for i in tqdm(range(20)):
-                noise_ = Fake_PV_Dataset.noise(i)
-                try: del f[f'{noise_:06.3f}_noise']
+                sample_rate = 1/(1+i)
+                self.dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
+                sampled_data = self.low_signal(y=fit, sample_rate=sample_rate)
+                self.fit_scaler(data=sampled_data.reshape(-1, fit.shape[-1]).T, 
+                                data_0=fit.reshape(-1, fit.shape[-1]).T )
+                try: del f['unscaled'][self.dset_name]
                 except: pass
-                dset = f.create_dataset(f'{noise_:06.3f}_noise', 
-                                        data = self.add_noise(y=fit, noise=noise_),
+                try: del f['scaled'][self.dset_name]
+                except: pass
+                
+                dset = f['unscaled'].create_dataset(self.dset_name, # unscaled
+                                        data = sampled_data.reshape(-1, fit.shape[-1]),
                                         dtype=np.float32)
+                dset = f['scaled'].create_dataset(self.dset_name, # unscaled training data
+                                        data = sampled_data.reshape(-1, fit.shape[-1]),
+                                        dtype=np.float32)
+                # dset = f.create_dataset(self.dset_name, # scaled nxmfeatures
+                #                         data = self.scale_data( sampled_data.reshape(-1, fit.shape[-1]).T ).T,
+                #                         dtype=np.float32)
+                # dset = f.create_dataset(self.dset_name, # scaled speclen features
+                #                         data = self.scale_data( sampled_data.reshape(-1, fit.shape[-1]) ),
+                #                         dtype=np.float32)
+                # dset = f.create_dataset(self.dset_name, # scaled 1 features
+                #                         data = self.scale_data( sampled_data.reshape(-1,1) ),
+                #                         dtype=np.float32)
                 
                 f.flush()
 
