@@ -16,6 +16,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 
 def draw_m_in_array(size_=100):
+    '''
+        # self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
+        self.mask = draw_m_in_array(self.shape[0]).flatten()
+    '''
     arr_ = np.zeros((size_, size_), dtype=int)
     w=size_//10
     size=int(size_/1.5)
@@ -43,33 +47,33 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
                  pv_fitter=None,
                  num_classes=5,
                  num_curves=3,
-                 scaler=Pipeline([('scaler', MinMaxScaler()),
-                                  ('minmax', MinMaxScaler())]),
+                 scaler='default',
                  dset_num = 0):
         '''dset is x*y,spec_len'''
-        self.save_folder = os.makedirs(save_folder, exist_ok=True)
+        os.makedirs(save_folder, exist_ok=True)
+        self.save_folder = save_folder
         self.pv_fitter = pv_fitter
-        # set parameters for generating PV curves
-        
-        self.pv_param_classes = {
-            'a': np.random.random_integers(0, 10, (num_classes, num_curves)),
-            'E': np.random.random_integers(0, shape[-1], (num_classes, num_curves,)),
-            'F': np.random.random_integers(0, shape[-1] // 2, (num_classes, num_curves,)),
-            'nu': np.random.random((num_classes, num_curves,))
-        }
-        
-        self.h5_name = f'{self.save_folder}fake_pv_uniform.h5'
+        self.h5_name = f'{self.save_folder}_poisson_sampled_pv.h5'
         self._dset_name = f'{1:06.3f}_sample_rate'
         self.shape = shape
         self.spec_len = self.shape[-1]
-        # self.mask = np.ones((self.shape[0], self.shape[1])); self.mask[40:60,30:50] = 0; self.mask = self.mask.flatten()
-        self.mask = draw_m_in_array(self.shape[0]).flatten()
-        self.scaler = scaler
-        # self.scaler_list = [scaler.copy() for _ in range(len(noise_levels))]
-        # Fit scaler to 0-noise data so all noisy data uses the same scaling parameters
-        if overwrite: self.generate_pv_data()
         
-        self.dset_names = list(self.h5_keys())
+        # set parameters for generating PV curves
+        if overwrite:
+            self.pv_param_classes = {
+                'a': np.random.random_integers(0, 10, (num_classes, num_curves)),
+                'E': np.random.random_integers(0, shape[-1], (num_classes, num_curves,)),
+                'F': np.random.random_integers(1, shape[-1] // 2, (num_classes, num_curves,)),
+                'nu': np.random.random((num_classes, num_curves,))
+            }
+            self.scaler = scaler
+            self.generate_pv_data()
+        else: 
+            self._read_pv_param_classes()
+            self.dset_names = self.h5_keys()
+            if scaler == 'default': self._read_scaler()
+            else: self.scaler = scaler
+        
         self._noise = self.dset_names[dset_num]
         self.zero_dset = self.getitem_zero_dset(range(self.shape[0]*self.shape[1]))[1]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
@@ -81,18 +85,23 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         old_dset_name = self._dset_name
         self._dset_name = self.dset_names[i] if isinstance(i, int) else i
             
-    def low_signal(self,y, sample_rate=1):
+    def low_signal(self,y, sample_rate=1, background_noise=0):
         """
         Simulate low-signal measurement with Poisson statistics.
+        args:
+            y: torch.Tensor, the signal to be reduced
+            sample_rate: float, the sample rate to be applied
+            background_noise: float, the background noise to be added
+        returns:
+            torch.Tensor, the reduced signal
         """
         # Reduce signal intensity (simulating short exposure/weak source)
-        reduced = 1 + y * sample_rate
+        reduced = y * sample_rate + background_noise
         
         if sample_rate == 1: return reduced
-        else: return torch.poisson(torch.clamp(reduced, min=1e-10))
-    
-    
-    def fit_scaler(self, data, data_0):
+        else: return torch.poisson(reduced)
+     
+    def fit_scaler(self, data):
         if self.scaler is not None:
             # self.scaler_list[self.noise_levels.index(self.noise_)]['scaler'].fit(self[:].reshape(-1, self.shape[-1]).T)
             # self.scaler_list[self.noise_levels.index(self.noise_)]['minmax'].fit(self.zero_dset.reshape(-1, self.zero_dset.shape[-1]).T)
@@ -102,9 +111,9 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         
     def scale_data(self,data): 
         if self.scaler is None: return data
+        mask = data.any(axis=-1)
         return self.scaler.transform(data)
-
-    
+  
     @staticmethod
     def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
      
@@ -129,11 +138,14 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
             try: data = np.array([f['scaled'][self.dset_names[0]][i] for i in idx])
             except: data = f['scaled'][self.dset_names[0]][idx]
             
-            return idx,data
+        return idx,data
     
     def open_h5(self): return h5py.File(self.h5_name, 'a')
     
-    def h5_keys(self): return list(self.open_h5()['scaled'].keys())
+    def h5_keys(self): 
+        with self.open_h5() as f:
+            keys = list(f['unscaled'].keys())
+        return keys
     
     def create_concentric_circles(self, fits):
         """Create filled concentric circles where each ring corresponds to a class from fits."""
@@ -157,6 +169,61 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         result = fits[ring_idx] * mask.unsqueeze(-1)
         return result
     
+    def _write_unscaled_dataset(self, dset_name, sampled_data, fit_shape):
+        """Write unscaled dataset to h5 file."""
+        with self.open_h5() as f:
+
+            # write pv curve generation parameters to h5 file unscaled group
+            try: f.create_group('unscaled')
+            except: pass
+            for k,v in self.pv_param_classes.items():
+                f['unscaled'].attrs[k] = v
+            
+            try: del f['unscaled'][dset_name]
+            except: pass
+            
+            dset = f['unscaled'].create_dataset(dset_name,
+                                                data=sampled_data.reshape(-1, fit_shape[-1]),
+                                                dtype=np.float32)
+            f.flush()
+          
+    def _write_scaled_dataset(self):
+        """Write scaled dataset to h5 file."""
+        print("Writing scaled dataset...")
+        with self.open_h5() as f:      
+            # write scaler to h5 file scaled group
+            try: f.create_group('scaled')
+            except: pass
+            buf = io.BytesIO()
+            joblib.dump(self.scaler, buf)
+            buf.seek(0)
+            f['scaled'].attrs["scaler_joblib"] = np.void(buf.read())
+            f['scaled'].attrs["sklearn_version"] = __import__("sklearn").__version__
+            
+            
+            for i in tqdm(range(20)):
+                dset_name = self.dset_names[i]
+                sampled_data = f['unscaled'][dset_name][:]
+                self.fit_scaler(data=sampled_data)
+                
+                try: del f['scaled'][dset_name]
+                except: pass
+                
+                dset = f['scaled'].create_dataset(dset_name,
+                                              data=self.scale_data(sampled_data),
+                                              dtype=np.float32)
+            f.flush()
+    
+    def _read_pv_param_classes(self):
+        with self.open_h5() as f:
+            self.pv_param_classes = {k: v for k,v in f['unscaled'].attrs.items()}
+            return self.pv_param_classes
+    
+    def _read_scaler(self):
+        with self.open_h5() as f:
+            self.scaler = joblib.load(io.BytesIO(f['scaled'].attrs["scaler_joblib"]))
+            return self.scaler
+        
     def generate_pv_data(self):
         '''This function takes a dictionary of parameters classes and returns a numpy array of parameters'''
         
@@ -166,50 +233,15 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         fits = fits.sum(axis=1)
         fit = self.create_concentric_circles(fits).reshape(self.shape[0]*self.shape[1], -1)
         # make tile this in 100x100 square
-        with self.open_h5() as f:
-            # write pv curve generation parameters to h5 file unscaled group
-            try: f.create_group('unscaled')
-            except: pass
-            for k,v in self.pv_param_classes.items():
-                f['unscaled'].attrs[k] = v
-            
-            # write scaler to h5 file scaled group
-            try: f.create_group('scaled')
-            except: pass
-            buf = io.BytesIO()
-            joblib.dump(self.scaler, buf)
-            buf.seek(0)
-            f['scaled'].attrs["scaler_joblib"] = np.void(buf.read())
-            f['scaled'].attrs["sklearn_version"] = __import__("sklearn").__version__
+        for i in tqdm(range(20)):
+            sample_rate = 5/(5+i)
+            self.dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
+            sampled_data = self.low_signal(y=fit, sample_rate=sample_rate)
+            self._write_unscaled_dataset(self.dset_name, sampled_data, fit.shape)
+        self.dset_names = self.h5_keys()
+        self._write_scaled_dataset()
 
-            for i in tqdm(range(20)):
-                sample_rate = 1/(1+i)
-                self.dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
-                sampled_data = self.low_signal(y=fit, sample_rate=sample_rate)
-                self.fit_scaler(data=sampled_data.reshape(-1, fit.shape[-1]).T, 
-                                data_0=fit.reshape(-1, fit.shape[-1]).T )
-                try: del f['unscaled'][self.dset_name]
-                except: pass
-                try: del f['scaled'][self.dset_name]
-                except: pass
-                
-                dset = f['unscaled'].create_dataset(self.dset_name, # unscaled
-                                        data = sampled_data.reshape(-1, fit.shape[-1]),
-                                        dtype=np.float32)
-                dset = f['scaled'].create_dataset(self.dset_name, # unscaled training data
-                                        data = sampled_data.reshape(-1, fit.shape[-1]),
-                                        dtype=np.float32)
-                # dset = f.create_dataset(self.dset_name, # scaled nxmfeatures
-                #                         data = self.scale_data( sampled_data.reshape(-1, fit.shape[-1]).T ).T,
-                #                         dtype=np.float32)
-                # dset = f.create_dataset(self.dset_name, # scaled speclen features
-                #                         data = self.scale_data( sampled_data.reshape(-1, fit.shape[-1]) ),
-                #                         dtype=np.float32)
-                # dset = f.create_dataset(self.dset_name, # scaled 1 features
-                #                         data = self.scale_data( sampled_data.reshape(-1,1) ),
-                #                         dtype=np.float32)
-                
-                f.flush()
+
 
 class Fake_PV_Embeddings(torch.utils.data.Dataset):
     def __init__(self, dset, model, checkpoint_path, **kwargs):
