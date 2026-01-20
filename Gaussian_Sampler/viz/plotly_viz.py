@@ -356,7 +356,7 @@ class Poisson_Sampled_PV_viz:
         # Add red marker for clicked point
         self.batch_img_fig.add_trace(go.Scatter(
             x=[self.batch_x], y=[self.batch_y], mode='markers',
-            marker=dict(color='red', size=10), name='Selected'
+            marker=dict(color='red', size=10), name='Select'
         ))
         # Add click handler to the heatmap and red marker
         self.batch_img_fig.data[0].on_click(self._handle_batch_click)
@@ -365,7 +365,8 @@ class Poisson_Sampled_PV_viz:
             title=f'Sampled rate: {self.dset_list[i]}',
             xaxis_title='X Position', yaxis_title='Y Position',
             width=450, height=450,
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+            legend=dict[str, str | float | dict[str, int]](orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0, entrywidth=0.15, entrywidthmode='fraction', 
+                        font=dict(size=10)  )
         )
 
         # Batch spectrum
@@ -388,10 +389,11 @@ class Poisson_Sampled_PV_viz:
         self.batch_spec_fig.add_vline(x=s, line=dict(color='black', width=2))
         self.batch_spec_fig.update_layout(
             xaxis_title='Spectrum Value', yaxis_title='Intensity',
-            yaxis=dict(range=[0, max(self.dset.maxes)]),
+            yaxis=dict(range=[0, max(self.dset.maxes.flatten())]),
             xaxis=dict(range=[0, self.dset.spec_len]),
             width=450, height=450,
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+            legend=dict[str, str | float | dict[str, int]](orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0, entrywidth=0.15, entrywidthmode='fraction', 
+                        font=dict(size=10)  )
         )
 
     def layout_batch(self):
