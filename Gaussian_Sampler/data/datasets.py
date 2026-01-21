@@ -14,6 +14,7 @@ import os
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
+from ..models.pv_fitter import Fitter_AE
 
 def draw_m_in_array(size_=100):
     '''
@@ -71,19 +72,24 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         else: 
             self._read_pv_param_classes()
             self.dset_names = self.h5_keys()
+            self._dset_index = 0
             if scaler == 'default': self._read_scaler()
             else: self.scaler = scaler
         
-        self._noise = self.dset_names[dset_num]
         self.zero_dset = self.getitem_zero_dset(range(self.shape[0]*self.shape[1]))[1]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
         
     @property
-    def dset_name(self): return self._dset_name
+    def dset_index(self): return self.dset_names[self._dset_index]
+    @dset_index.setter
+    def dset_index(self, i):
+        self._dset_index = i 
+    
+    @property
+    def dset_name(self): return self.dset_names[self._dset_index]    
     @dset_name.setter
-    def dset_name(self, i):
-        old_dset_name = self._dset_name
-        self._dset_name = self.dset_names[i] if isinstance(i, int) else i
+    def dset_name(self, name):
+        self._dset_index = self.dset_names.index(name)
             
     def low_signal(self,y, sample_rate=1, background_noise=0):
         """
@@ -113,7 +119,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         if self.scaler is None: return data
         mask = data.any(axis=-1)
         return self.scaler.transform(data)
-  
+        
     @staticmethod
     def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
      
@@ -126,7 +132,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
 
     def __getitem__(self, idx):
         # idx=7889
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
             try: data = np.array([f['scaled'][self.dset_name][i] for i in idx])
             except: data = f['scaled'][self.dset_name][idx]
 
@@ -134,16 +140,16 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         
     def getitem_zero_dset(self,idx):
         # idx=7889
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
             try: data = np.array([f['scaled'][self.dset_names[0]][i] for i in idx])
             except: data = f['scaled'][self.dset_names[0]][idx]
             
         return idx,data
     
-    def open_h5(self): return h5py.File(self.h5_name, 'a')
+    def open_h5_file(self): return h5py.File(self.h5_name, 'a')
     
     def h5_keys(self): 
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
             keys = list(f['unscaled'].keys())
         return keys
     
@@ -171,11 +177,11 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
     
     def _write_unscaled_dataset(self, dset_name, sampled_data, fit_shape):
         """Write unscaled dataset to h5 file."""
-        with self.open_h5() as f:
-
+        with self.open_h5_file() as f:
             # write pv curve generation parameters to h5 file unscaled group
             try: f.create_group('unscaled')
             except: pass
+            
             for k,v in self.pv_param_classes.items():
                 f['unscaled'].attrs[k] = v
             
@@ -190,15 +196,10 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
     def _write_scaled_dataset(self):
         """Write scaled dataset to h5 file."""
         print("Writing scaled dataset...")
-        with self.open_h5() as f:      
+        with self.open_h5_file() as f:      
             # write scaler to h5 file scaled group
             try: f.create_group('scaled')
             except: pass
-            buf = io.BytesIO()
-            joblib.dump(self.scaler, buf)
-            buf.seek(0)
-            f['scaled'].attrs["scaler_joblib"] = np.void(buf.read())
-            f['scaled'].attrs["sklearn_version"] = __import__("sklearn").__version__
             
             
             for i in tqdm(range(20)):
@@ -212,17 +213,30 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
                 dset = f['scaled'].create_dataset(dset_name,
                                               data=self.scale_data(sampled_data),
                                               dtype=np.float32)
+                for k,v in self._get_scaler_buf().items():
+                    dset.attrs[k] = v
+                
             f.flush()
-    
+      
+    def _get_scaler_buf(self):
+        '''Get dset.scaler as bytes buffer.'''
+        buf = io.BytesIO()
+        joblib.dump(self.scaler, buf)
+        buf.seek(0)
+        return {
+            "scaler_joblib": np.void(buf.read()),
+        } 
+        
+    def _read_scaler_buf(self, dset_path):
+        '''Read h5 attrs scaler as bytes buffer.'''
+        with self.open_h5_file() as f:
+            self.scaler = joblib.load(io.BytesIO(f[dset_path].attrs["scaler_joblib"]))
+        return self.scaler
+   
     def _read_pv_param_classes(self):
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
             self.pv_param_classes = {k: v for k,v in f['unscaled'].attrs.items()}
             return self.pv_param_classes
-    
-    def _read_scaler(self):
-        with self.open_h5() as f:
-            self.scaler = joblib.load(io.BytesIO(f['scaled'].attrs["scaler_joblib"]))
-            return self.scaler
         
     def generate_pv_data(self):
         '''This function takes a dictionary of parameters classes and returns a numpy array of parameters'''
@@ -240,12 +254,6 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
             self._write_unscaled_dataset(self.dset_name, sampled_data, fit.shape)
         self.dset_names = self.h5_keys()
         self._write_scaled_dataset()
-
-
-
-class Fake_PV_Embeddings(torch.utils.data.Dataset):
-    def __init__(self, dset, model, checkpoint_path, **kwargs):
-        pass
 
 class Py4DSTEM_Dataset(torch.utils.data.Dataset):
     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
@@ -356,12 +364,12 @@ class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
     #     self._noise = self.dset.h5_keys()[i]
     #     self.model.load_weights(self.checkpoint_path)
     
-    def open_h5(self): return h5py.File(self.h5_name, 'a')
+    def open_h5_file(self): return h5py.File(self.h5_name, 'a')
     
-    def h5_keys(self): return list(self.open_h5().keys())
+    def h5_keys(self): return list(self.open_h5_file().keys())
     
     def write_embeddings(self, batch_size=100, overwrite=False):
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
             if not overwrite:
                 try: 
                     fits = f[f'{self.model.check}_fits']
@@ -418,11 +426,11 @@ class Py4DSTEM_Embeddings(torch.utils.data.Dataset):
                         params[i*batch_size:(i+1)*batch_size] = params_.cpu().numpy()
                     
     def __getitem__(self, idx):
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
            return f[f'{self.model.check}_fits'][idx], f[f'{self.model.check}_params'][idx]
         
     def __len__(self):
-        with self.open_h5() as f:
+        with self.open_h5_file() as f:
             return f[f'{self.model.check}_fits'].shape[0]
 
 class NP_metadata(torch.utils.data.Dataset):
@@ -537,7 +545,7 @@ class NP_EELS_Dataset(torch.utils.data.Dataset):
 #             # return img
 #             return index,img*mask
 
-#     def open_h5(self):
+#     def open_h5_file(self):
 #         return h5py.File(self.h5_name, 'r+')
 
 #     def view_log(self,index):

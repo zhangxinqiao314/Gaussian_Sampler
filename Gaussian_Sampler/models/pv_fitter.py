@@ -17,10 +17,13 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
-
+from torch.autograd import Variable
 from datetime import date
 from tqdm import tqdm
 import wandb
+import numpy as np
+import h5py
+
 #TODO: make classes out of functions. 
 class pseudovoigt_1D_fitters():
     def __init__(self, limits=[1,1,975]):
@@ -254,7 +257,6 @@ class Fitter_AE:
         encoder: The encoder model
         optimizer: Adam optimizer
         best_train_loss: Best training loss achieved
-        checkpoint: Path to latest checkpoint
         folder: Directory for saving checkpoints
     """
     def __init__(self,
@@ -279,7 +281,6 @@ class Fitter_AE:
                     "hidden_embedding": block_factory(FC_Block)(output_size_list=[16,8,4])
                 },
                 "skip_connections": {"hidden_xfc": "hidden_embedding"} },
-                checkpoint_folder='./checkpoints',
                 sampler=None,
                 sampler_params={},
                 collate_fn=None,
@@ -310,7 +311,8 @@ class Fitter_AE:
         self.best_train_loss = float('inf')
         self.checkpoint = None
         self.scheduler = None
-        self._checkpoint_folder = checkpoint_folder
+        self._checkpoint_folder = os.path.split(dset.h5_name)[0] + f'/checkpoints/{dset.dset_name}'
+        self.embedding_h5_name = os.path.split(dset.h5_name)[0] + '/embeddings.h5'
         
     @property
     def dataloader_sampler(self): return self._dataloader_sampler   
@@ -373,8 +375,7 @@ class Fitter_AE:
             self._check = None
             self._checkpoint_folder = None
             self._checkpoint_file = None
-            
-    
+             
     def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False, primary_loss_function=F.mse_loss):
         """Train the model.
 
@@ -453,15 +454,7 @@ class Fitter_AE:
         
         try: self.loss_params = checkpoint['loss_params']
         except: self.loss_params = None
-
-    def get_embedding(self, dset, batch_size=100):
-        self.configure_dataloader_sampler(sampler=None)
-        self.configure_dataloader(batch_size=batch_size)
-        
-        for i, (idx, x) in enumerate(tqdm(self.dataloader, leave=True, total=len(self.dataloader))):
-            fits, params = self.encoder(x)
-            
-        return 
+    
     # Loss stuff
     def _initialize_loss_components(self, train_iterator, 
                                     coef1=0, coef2=0, coef3=0, coef4=0, 
@@ -621,3 +614,87 @@ class Fitter_AE:
                 wandb.log({k: v/(i+1) for k, v in accumulated_loss_dict.items()})
 
         return accumulated_loss_dict
+    
+    def performance_metrics(self, dset_name): # TODO: mse, r^2 
+        pass
+    # embedding stuff
+    def open_embedding_h5(self): return h5py.File(self.embedding_h5_name, 'a')
+    
+    def _check_embedding_tree_structure(self, dset_name,): # TODO: Error handling for existing group, wrong shape
+        with self.open_embedding_h5() as f:
+            try: f.create_group(self.check)
+            except: pass
+            
+            try: f[self.check].create_group('scaled')
+            except: pass
+                            
+            try: f[self.check]['scaled'].create_dataset(dset_name+'_fits', shape=(len(self.dset), self.num_fits, self.dset.shape[-1]), dtype=np.float32)
+            except: pass
+            try: f[self.check]['scaled'].create_dataset(dset_name+'_params', shape=(len(self.dset), self.num_fits, self.num_params), dtype=np.float32)
+            except: pass
+                
+            try: f[self.check].create_group('unscaled')
+            except: pass
+            try: f[self.check]['unscaled'].create_dataset(dset_name+'_fits', shape=(len(self.dset), self.num_fits, self.dset.shape[-1]), dtype=np.float32)
+            except: pass
+            try: f[self.check]['unscaled'].create_dataset(dset_name+'_params', shape=(len(self.dset), self.num_fits, self.num_params), dtype=np.float32)
+            except: pass
+    
+    def _unscale_embedding(self, dset_name, sampled_data, fit_shape):
+        """Write unscaled dataset to h5 file."""
+        with self.open_embedding_h5() as f:
+            # write pv curve generation parameters to h5 file unscaled group
+            self.dset.scaler = self.dset._read_scaler_buf(dset_path='unscaled/'+dset_name)
+            f[self.check]['unscaled'][dset_name+'_fits'] = self.dset.scaler.inverse_transform(f[self.check]['scaled'][dset_name+'_fits'])
+            f[self.check]['unscaled'][dset_name+'_params'] = f[self.check]['scaled'][dset_name+'_params']
+            f[self.check]['unscaled'][dset_name+'_params'][...,0] = self.dset.scaler.inverse_transform(f[self.check]['unscaled'][dset_name+'_params'][...,0])
+                   
+    def _write_scaled_embedding(self, noise_level, batch_size=100):
+        """Write scaled dataset to h5 file. 
+        Args:
+            noise_level (int): Noise level to write embeddings for.
+        
+        """
+        print("Writing scaled dataset...")   
+        self.dset.dset_index = noise_level
+        self._check_embedding_tree_structure(dset_name=self.dset.dset_name)
+        
+        with self.open_embedding_h5() as f:   
+            # f[self.check].attrs = self.get_checkpoint_metadata() # TODO: add checkpoint metadata
+            for i, (idx, x) in enumerate(tqdm(self.dataloader, leave=True, total=len(self.dataloader))):
+                with torch.no_grad():
+                    fits, params = self.encoder(x.to(self.device))
+                    f['scaled'][self.dset.dset_name+'_fits'][i*batch_size:(i+1)*batch_size] = fits.cpu().numpy()
+                    f['scaled'][self.dset.dset_name+'_params'][i*batch_size:(i+1)*batch_size] = params.cpu().numpy()
+                    # for k,v in self.dset._get_scaler_buf().items(): Need? Not sure if this is needed
+                    #     f['scaled'][self.dset.dset_name+'_fits'].attrs[k] = v
+                    #     f['scaled'][self.dset.dset_name+'_params'].attrs[k] = v
+            f.flush()
+    
+    def write_embeddings(self, noise_levels=[0], batch_size=100):
+        '''Write embeddings to h5 file.
+        Saved in folder with dataset scaling method (ie, '../../toy_dataset/l1_norm') 
+        File structure:
+            embedding_h5_File
+            |-- checkpoint_group
+            |   |-- attributes
+            |   |   |-- dset_parameters
+            |   |   |-- model_parameters
+            |   |   |-- sampler_parameters
+            |   |-- scaled_group
+            |   |   |-- attributes
+            |   |   |   |-- scaler
+            |   |   |-- dset_name_fits (not summed over fits)
+            |   |   |-- dset_name_params
+            |   |-- unscaled
+            |   |   |-- dset_name_fits (not summer over fits)
+            |   |   |-- dset_name_params
+        Args:
+            noise_levels (iterable, int): List of noise levels to write embeddings for.
+        '''
+        for noise_level in noise_levels: # noise level integers
+            # write embeddings
+            self.configure_dataloader_sampler(sampler=None)
+            self.configure_dataloader(batch_size=batch_size)
+            self._write_scaled_embedding(noise_level)
+            self._unscale_embedding(noise_level)
