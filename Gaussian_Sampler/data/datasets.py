@@ -49,6 +49,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
                  num_classes=5,
                  num_curves=3,
                  scaler='default',
+                 norm_calculation=lambda x: np.linalg.norm(x,axis=-1, ord='max'),
                  dset_num = 0):
         '''dset is x*y,spec_len'''
         os.makedirs(save_folder, exist_ok=True)
@@ -58,7 +59,6 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         self._dset_name = f'{1:06.3f}_sample_rate'
         self.shape = shape
         self.spec_len = self.shape[-1]
-        
         # set parameters for generating PV curves
         if overwrite:
             self.pv_param_classes = {
@@ -68,6 +68,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
                 'nu': np.random.random((num_classes, num_curves,))
             }
             self.scaler = scaler
+            self.norm_calculation = norm_calculation
             self.generate_pv_data()
         else: 
             self._read_pv_param_classes()
@@ -108,16 +109,14 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         else: return torch.poisson(reduced)
      
     def fit_scaler(self, data):
-        if self.scaler is not None:
-            # self.scaler_list[self.noise_levels.index(self.noise_)]['scaler'].fit(self[:].reshape(-1, self.shape[-1]).T)
-            # self.scaler_list[self.noise_levels.index(self.noise_)]['minmax'].fit(self.zero_dset.reshape(-1, self.zero_dset.shape[-1]).T)
-            self.scaler.fit(data)
-            # self.scaler['scaler'].fit(data)
-            # self.scaler['minmax'].fit(data_0)
+        if self.scaler is not None: self.scaler.fit(data)
         
-    def scale_data(self,data): 
+        if self.norm_calculation is not None:
+            self.maxes = self.norm_calculation(data)
+            self.scaler.set_params(**{'max': self.maxes})
+        
+    def scale_data(self, data): 
         if self.scaler is None: return data
-        mask = data.any(axis=-1)
         return self.scaler.transform(data)
         
     @staticmethod

@@ -18,7 +18,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
-from datetime import date
+from datetime import datetime
 from tqdm import tqdm
 import wandb
 import numpy as np
@@ -385,8 +385,6 @@ class Fitter_AE:
             binning (bool): Whether to use binning in loss calculation. Defaults to True
             weight_by_distance (bool): Whether to weight samples by distance. Defaults to True
         """
-        today = date.today()
-        save_date=today.strftime('(%Y-%m-%d, %H:%M:%S)')
         make_folder(self.checkpoint_folder)
         print(os.path.abspath(self.checkpoint_folder))
 
@@ -418,13 +416,17 @@ class Fitter_AE:
           # TODO: add regularization losses
           # TODO: add embedding saver
           # TODO: add lr scheduler
-            lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
-            self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
             if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,)
             
         if return_losses: return loss_dict
         
     def save_checkpoint(self,epoch,loss_dict,**kwargs): # TODO: needs to save sampler
+        """Save the checkpoint"""
+        today = datetime.today()
+        save_date=today.strftime('(%Y-%m-%d, %H:%M:%S)')
+        lr_ = format(self.optimizer.param_groups[0]['lr'], '.5f')
+        self.checkpoint = self.checkpoint_folder + f'/{save_date}_epoch:{epoch:04d}_lr:{lr_}_trainloss:{loss_dict["train_loss"]:.4f}.pkl'
+        
         checkpoint = {
             'encoder': self.encoder.state_dict(),
             'optimizer': self.optimizer.state_dict(),
@@ -639,8 +641,10 @@ class Fitter_AE:
             except: pass
             try: f[self.check]['unscaled'].create_dataset(dset_name+'_params', shape=(len(self.dset), self.num_fits, self.num_params), dtype=np.float32)
             except: pass
+
+            f.flush()
     
-    def _unscale_embedding(self, dset_name, sampled_data, fit_shape):
+    def _unscale_embedding(self, dset_name):
         """Write unscaled dataset to h5 file."""
         with self.open_embedding_h5() as f:
             # write pv curve generation parameters to h5 file unscaled group
@@ -659,16 +663,14 @@ class Fitter_AE:
         self.dset.dset_index = noise_level
         self._check_embedding_tree_structure(dset_name=self.dset.dset_name)
         
-        with self.open_embedding_h5() as f:   
+        with self.open_embedding_h5() as f:
             # f[self.check].attrs = self.get_checkpoint_metadata() # TODO: add checkpoint metadata
             for i, (idx, x) in enumerate(tqdm(self.dataloader, leave=True, total=len(self.dataloader))):
                 with torch.no_grad():
                     fits, params = self.encoder(x.to(self.device))
-                    f['scaled'][self.dset.dset_name+'_fits'][i*batch_size:(i+1)*batch_size] = fits.cpu().numpy()
-                    f['scaled'][self.dset.dset_name+'_params'][i*batch_size:(i+1)*batch_size] = params.cpu().numpy()
-                    # for k,v in self.dset._get_scaler_buf().items(): Need? Not sure if this is needed
-                    #     f['scaled'][self.dset.dset_name+'_fits'].attrs[k] = v
-                    #     f['scaled'][self.dset.dset_name+'_params'].attrs[k] = v
+                    f[self.check]['scaled'][self.dset.dset_name+'_fits'][i*batch_size:(i+1)*batch_size] = fits.cpu().numpy()
+                    f[self.check]['scaled'][self.dset.dset_name+'_params'][i*batch_size:(i+1)*batch_size] = params.cpu().numpy()
+
             f.flush()
     
     def write_embeddings(self, noise_levels=[0], batch_size=100):
@@ -697,4 +699,4 @@ class Fitter_AE:
             self.configure_dataloader_sampler(sampler=None)
             self.configure_dataloader(batch_size=batch_size)
             self._write_scaled_embedding(noise_level)
-            self._unscale_embedding(noise_level)
+            self._unscale_embedding(self.dset.dset_name)
