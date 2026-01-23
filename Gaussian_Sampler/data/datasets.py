@@ -260,6 +260,178 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
         self._write_scaled_dataset()
 
 
+class Poisson_Sampled_PV_Embeddings():
+    """Dataset class for accessing embeddings (fits and params) from h5 file."""
+    
+    def __init__(self, model, dset, scaled=True):
+        """
+        Args:
+            model: Model object (Fitter_AE) that has embedding_h5_name attribute. must be initialized
+            dset: Poisson_Sampled_PV_Dataset object. must be initialized
+            scaled: If True, use scaled embeddings; if False, use unscaled
+        """
+        self.model = model
+        self.check = model.check
+        self.dset = dset
+        self.scaled = scaled
+        self.embedding_h5_name = model.embedding_h5_name
+        self.num_fits = model.num_fits
+        self.num_params = model.num_params
+        
+        # Determine which group to use
+        self.group = 'scaled' if scaled else 'unscaled'
+        
+        # Set initial dataset name
+        self._dset_name = dset.dset_name
+        
+    @property
+    def dset_name(self):
+        return self._dset_name
+    
+    @dset_name.setter
+    def dset_name(self, name):
+        self._dset_name = name
+        self.dset.dset_name = name
+    
+    def open_embedding_h5(self):
+        """Open the embedding h5 file."""
+        return h5py.File(self.embedding_h5_name, 'r')
+    
+    def _check_embedding_tree_structure(self, dset_name):
+        """Check and create embedding tree structure if needed."""
+        with h5py.File(self.embedding_h5_name, 'a') as f:
+            try: 
+                f.create_group(self.check)
+            except: 
+                pass
+            
+            try: 
+                f[self.check].create_group('scaled')
+            except: 
+                pass
+                        
+            try: 
+                f[self.check]['scaled'].create_dataset(
+                    dset_name+'_fits', 
+                    shape=(len(self.dset), self.num_fits, self.dset.shape[-1]), 
+                    dtype=np.float32
+                )
+            except: 
+                pass
+            try: 
+                f[self.check]['scaled'].create_dataset(
+                    dset_name+'_params', 
+                    shape=(len(self.dset), self.num_fits, self.num_params), 
+                    dtype=np.float32
+                )
+            except: 
+                pass
+                
+            try: 
+                f[self.check].create_group('unscaled')
+            except: 
+                pass
+            try: 
+                f[self.check]['unscaled'].create_dataset(
+                    dset_name+'_fits', 
+                    shape=(len(self.dset), self.num_fits, self.dset.shape[-1]), 
+                    dtype=np.float32
+                )
+            except: 
+                pass
+            try: 
+                f[self.check]['unscaled'].create_dataset(
+                    dset_name+'_params', 
+                    shape=(len(self.dset), self.num_fits, self.num_params), 
+                    dtype=np.float32
+                )
+            except: 
+                pass
+
+            f.flush()
+    
+    def _unscale_embedding(self, dset_name):
+        """Write unscaled dataset to h5 file."""
+        with h5py.File(self.embedding_h5_name, 'a') as f:
+            # Read scaler from original dataset file
+            self.dset.scaler = self.dset._read_scaler_buf(dset_path=f'scaled/{dset_name}')
+            # Unscale fits
+            f[self.check]['unscaled'][dset_name+'_fits'][:] = self.dset.unscale_data(
+                f[self.check]['scaled'][dset_name+'_fits'][:]
+            )
+            # Copy params (most don't need unscaling)
+            f[self.check]['unscaled'][dset_name+'_params'][:] = f[self.check]['scaled'][dset_name+'_params'][:]
+            # Unscale first parameter (Amplitude) only
+            f[self.check]['unscaled'][dset_name+'_params'][...,0] = self.dset.unscale_data(
+                f[self.check]['unscaled'][dset_name+'_params'][...,0], 
+                recalculate_maxes=False
+            )
+                   
+    def _write_scaled_embedding(self, batch_size=100):
+        """Write scaled dataset to h5 file."""
+        with h5py.File(self.embedding_h5_name, 'a') as f:
+            for i, (idx, x) in enumerate(tqdm(self.model.dataloader, leave=True, total=len(self.model.dataloader))):
+                with torch.no_grad():
+                    fits, params = self.model.encoder(x.to(self.model.device))
+                    f[self.check]['scaled'][self.dset.dset_name+'_fits'][i*batch_size:(i+1)*batch_size] = fits.cpu().numpy()
+                    f[self.check]['scaled'][self.dset.dset_name+'_params'][i*batch_size:(i+1)*batch_size] = params.cpu().numpy()
+
+            f.flush()
+    
+    def write_embeddings(self, noise_levels=[0], batch_size=100):
+        """Write embeddings to h5 file.
+        
+        Saved in folder with dataset scaling method (ie, '../../toy_dataset/l1_norm') 
+        File structure:
+            embedding_h5_File
+            |-- checkpoint_group
+            |   |-- attributes
+            |   |   |-- dset_parameters
+            |   |   |-- model_parameters
+            |   |   |-- sampler_parameters
+            |   |-- scaled_group
+            |   |   |-- attributes
+            |   |   |   |-- scaler
+            |   |   |-- dset_name_fits (not summed over fits)
+            |   |   |-- dset_name_params
+            |   |-- unscaled
+            |   |   |-- dset_name_fits (not summed over fits)
+            |   |   |-- dset_name_params
+        Args:
+            noise_levels (iterable, int): List of noise levels to write embeddings for.
+        """
+        for noise_level in noise_levels:  # noise level integers
+            # write embeddings
+            self.model.configure_dataloader_sampler(sampler=None)
+            self.model.configure_dataloader(batch_size=batch_size)
+            self.dset.dset_index = noise_level
+            self._check_embedding_tree_structure(self.dset.dset_name)
+            
+            self._write_scaled_embedding()
+            self._unscale_embedding(self.dset.dset_name)
+    
+    def __len__(self):
+        """Return the length of the dataset."""
+        with self.open_embedding_h5() as f:
+            return len(f[self.check][self.group][self.dset_name+'_fits'])
+    
+    def __getitem__(self, idx):
+        """Return fits and params for a given index.
+        
+        Args:
+            idx: Index or slice of indices
+            
+        Returns:
+            tuple: (fits, params) where:
+                - fits: numpy array of shape (num_fits, spec_len) or (len(idx), num_fits, spec_len)
+                - params: numpy array of shape (num_fits, num_params) or (len(idx), num_fits, num_params)
+        """
+        with self.open_embedding_h5() as f:
+            fits = f[self.check][self.group][self.dset_name+'_fits'][idx]
+            params = f[self.check][self.group][self.dset_name+'_params'][idx]
+            return fits, params
+
+
 class Py4DSTEM_Dataset(torch.utils.data.Dataset):
     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
         '''
