@@ -301,10 +301,11 @@ class Fitter_AE:
                                 **encoder_params
                                 ).to(self.device).type(torch.float32)
         self.optimizer = optim.Adam( self.encoder.parameters(), lr=self.learning_rate )
+        self.sampler = sampler
         self.sampler_params = sampler_params
         try: self.sampler_params.pop('dset')
         except: pass
-        self.configure_dataloader_sampler(sampler=sampler, **sampler_params)
+        self.configure_dataloader_sampler(sampler=self.sampler, **sampler_params)
         self.configure_dataloader(collate_fn=collate_fn)
         
         self.start_epoch = 0
@@ -448,7 +449,7 @@ class Fitter_AE:
         self.encoder.load_state_dict(checkpoint['encoder'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.start_epoch = checkpoint['epoch']
-        try: self.configure_dataloader_sampler(sampler=checkpoint['sampler'])
+        try: self.configure_dataloader_sampler(sampler=self.sampler, **checkpoint['sampler_params'])
         except: self.configure_dataloader_sampler(sampler=None)
         
         try: self.loss_dict = checkpoint['loss_dict']

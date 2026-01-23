@@ -82,8 +82,9 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
         
         self.zero_dset = self.getitem_zero_dset(range(self.shape[0]*self.shape[1]))[1]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
+    
     @property
-    def dset_index(self): return self.dset_names[self._dset_index]
+    def dset_index(self): return self._dset_index
     @dset_index.setter
     def dset_index(self, i):
         self._dset_index = i 
