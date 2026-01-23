@@ -648,21 +648,14 @@ class Fitter_AE:
         """Write unscaled dataset to h5 file."""
         with self.open_embedding_h5() as f:
             # write pv curve generation parameters to h5 file unscaled group
-            self.dset.scaler = self.dset._read_scaler_buf(dset_path='unscaled/'+dset_name)
-            f[self.check]['unscaled'][dset_name+'_fits'] = self.dset.scaler.inverse_transform(f[self.check]['scaled'][dset_name+'_fits'])
-            f[self.check]['unscaled'][dset_name+'_params'] = f[self.check]['scaled'][dset_name+'_params']
-            f[self.check]['unscaled'][dset_name+'_params'][...,0] = self.dset.scaler.inverse_transform(f[self.check]['unscaled'][dset_name+'_params'][...,0])
+            self.dset.scaler = self.dset._read_scaler_buf(dset_path='scaled/'+dset_name)
+            f[self.check]['unscaled'][dset_name+'_fits'][:] = self.dset.unscale_data(f[self.check]['scaled'][dset_name+'_fits'][:])
+            f[self.check]['unscaled'][dset_name+'_params'][:] = f[self.check]['scaled'][dset_name+'_params'][:]
+            f[self.check]['unscaled'][dset_name+'_params'][...,0] = self.dset.unscale_data(f[self.check]['unscaled'][dset_name+'_params'][...,0], 
+                                                                                           recalculate_maxes=False)
                    
-    def _write_scaled_embedding(self, noise_level, batch_size=100):
-        """Write scaled dataset to h5 file. 
-        Args:
-            noise_level (int): Noise level to write embeddings for.
-        
-        """
-        print("Writing scaled dataset...")   
-        self.dset.dset_index = noise_level
-        self._check_embedding_tree_structure(dset_name=self.dset.dset_name)
-        
+    def _write_scaled_embedding(self, batch_size=100):
+        """Write scaled dataset to h5 file. """
         with self.open_embedding_h5() as f:
             # f[self.check].attrs = self.get_checkpoint_metadata() # TODO: add checkpoint metadata
             for i, (idx, x) in enumerate(tqdm(self.dataloader, leave=True, total=len(self.dataloader))):
@@ -698,5 +691,11 @@ class Fitter_AE:
             # write embeddings
             self.configure_dataloader_sampler(sampler=None)
             self.configure_dataloader(batch_size=batch_size)
-            self._write_scaled_embedding(noise_level)
+            self.dset.noise_index = noise_level
+            self._check_embedding_tree_structure(self.dset.dset_name)
+            
+            self._write_scaled_embedding()
             self._unscale_embedding(self.dset.dset_name)
+            
+            
+            

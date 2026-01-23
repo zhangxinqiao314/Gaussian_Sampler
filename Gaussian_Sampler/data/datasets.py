@@ -1,3 +1,4 @@
+from types import NoneType
 from typing import Iterable
 import numpy as np
 import torch
@@ -40,7 +41,9 @@ def draw_m_in_array(size_=100):
     return arr_
 
 
-class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading scaler/param classes if it exists, TODO: getitem unscaled dataset
+class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): 
+    # TODO: try loading scaler/param classes if it exists, 
+    # TODO: getitem unscaled dataset
     def __init__(self, scaled=False, 
                  shape=[100,100,500], 
                  save_folder='./', 
@@ -49,7 +52,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
                  num_classes=5,
                  num_curves=3,
                  scaler='default',
-                 norm_calculation=lambda x: np.linalg.norm(x,axis=-1, ord='max'),
+                 norm_calculation=lambda x: np.linalg.norm(x,axis=-1, ord=np.inf),
                  dset_num = 0):
         '''dset is x*y,spec_len'''
         os.makedirs(save_folder, exist_ok=True)
@@ -59,6 +62,9 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         self._dset_name = f'{1:06.3f}_sample_rate'
         self.shape = shape
         self.spec_len = self.shape[-1]
+        self.scaler = scaler
+        self.norm_calculation = norm_calculation
+        
         # set parameters for generating PV curves
         if overwrite:
             self.pv_param_classes = {
@@ -67,19 +73,15 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
                 'F': np.random.random_integers(1, shape[-1] // 2, (num_classes, num_curves,)),
                 'nu': np.random.random((num_classes, num_curves,))
             }
-            self.scaler = scaler
-            self.norm_calculation = norm_calculation
             self.generate_pv_data()
         else: 
             self._read_pv_param_classes()
             self.dset_names = self.h5_keys()
             self._dset_index = 0
             if scaler == 'default': self._read_scaler()
-            else: self.scaler = scaler
         
         self.zero_dset = self.getitem_zero_dset(range(self.shape[0]*self.shape[1]))[1]
         self.maxes = self.zero_dset.max(axis=-1).reshape(self.shape[:-1]+(1,))
-        
     @property
     def dset_index(self): return self.dset_names[self._dset_index]
     @dset_index.setter
@@ -92,7 +94,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
     def dset_name(self, name):
         self._dset_index = self.dset_names.index(name)
             
-    def low_signal(self,y, sample_rate=1, background_noise=0):
+    def lower_signal(self,y, sample_rate=1, background_noise=0):
         """
         Simulate low-signal measurement with Poisson statistics.
         args:
@@ -107,7 +109,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         
         if sample_rate == 1: return reduced
         else: return torch.poisson(reduced)
-     
+    
     def fit_scaler(self, data):
         if self.scaler is not None: self.scaler.fit(data)
         
@@ -118,15 +120,18 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
     def scale_data(self, data): 
         if self.scaler is None: return data
         return self.scaler.transform(data)
-        
-    @staticmethod
-    def pv_area(I,w,nu): return I*w*np.pi/2/ ((1-nu)*(np.pi*np.log(2))**0.5 + nu)
-     
-    def unscale_data(self, unscaled_data, scaled_data):
-        self.scaler.fit(unscaled_data.reshape(-1, unscaled_data.shape[-1]))
-        unscaled_data = self.scaler.inverse_transform(scaled_data.reshape(-1, scaled_data.shape[-1])).reshape(scaled_data.shape)
-        return unscaled_data
 
+    def unscale_data(self, scaled_data, recalculate_maxes=True):
+        if recalculate_maxes: self.calculate_maxes()
+        try: 
+            return self.scaler.inverse_transform(scaled_data.reshape(-1, scaled_data.shape[-1])).reshape(scaled_data.shape)
+        except: 
+            return self.maxes.reshape((-1,) + (1,) * (scaled_data.ndim - 1)) * scaled_data # TODO: write maxes as metadata
+        
+    def calculate_maxes(self):
+        with self.open_h5_file() as f:
+            self.maxes = self.norm_calculation(f['unscaled'][self.dset_name][:]).reshape(-1)
+        
     def __len__(self): return (self.shape[0]*self.shape[1])
 
     def __getitem__(self, idx):
@@ -249,10 +254,11 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): #TODO: try loading s
         for i in tqdm(range(20)):
             sample_rate = 5/(5+i)
             self.dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
-            sampled_data = self.low_signal(y=fit, sample_rate=sample_rate)
+            sampled_data = self.lower_signal(y=fit, sample_rate=sample_rate)
             self._write_unscaled_dataset(self.dset_name, sampled_data, fit.shape)
         self.dset_names = self.h5_keys()
         self._write_scaled_dataset()
+
 
 class Py4DSTEM_Dataset(torch.utils.data.Dataset):
     def __init__(self, file_data, binfactor, block=0, center=None, **kwargs):
