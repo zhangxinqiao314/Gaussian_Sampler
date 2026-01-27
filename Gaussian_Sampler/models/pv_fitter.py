@@ -250,6 +250,7 @@ class Fitter_AE:
 
     Attributes:
         dset: The input dataset
+        checkpoints_label: Label for the checkpoints
         num_fits: Number of profiles to fit
         limits: Scale factors for parameters
         device: Computation device
@@ -265,6 +266,7 @@ class Fitter_AE:
                  num_params,
                  num_fits,
                  input_channels,
+                 checkpoints_label='',
                  learning_rate=3e-5,
                  device='cuda:0',
                  encoder = Multiscale1DFitter,
