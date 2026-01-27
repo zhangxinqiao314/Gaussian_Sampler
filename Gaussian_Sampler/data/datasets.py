@@ -116,7 +116,6 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
         
         if self.norm_calculation is not None:
             self.maxes = self.norm_calculation(data)
-            self.scaler.set_params(**{'max': self.maxes})
         
     def scale_data(self, data): 
         if self.scaler is None: return data
@@ -253,10 +252,10 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
         fit = self.create_concentric_circles(fits).reshape(self.shape[0]*self.shape[1], -1)
         # make tile this in 100x100 square
         for i in tqdm(range(20)):
-            sample_rate = 5/(5+i)
-            self.dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
+            sample_rate = 10**(-(i / 19) * 2)
+            dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
             sampled_data = self.lower_signal(y=fit, sample_rate=sample_rate)
-            self._write_unscaled_dataset(self.dset_name, sampled_data, fit.shape)
+            self._write_unscaled_dataset(dset_name, sampled_data, fit.shape)
         self.dset_names = self.h5_keys()
         self._write_scaled_dataset()
 
