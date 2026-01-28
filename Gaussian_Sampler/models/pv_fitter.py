@@ -314,8 +314,8 @@ class Fitter_AE:
         self.best_train_loss = float('inf')
         self.checkpoint = None
         self.scheduler = None
-        self._checkpoint_folder = os.path.split(dset.h5_name)[0] + f'/checkpoints/{dset.dset_name}'
-        self.embedding_h5_name = os.path.split(dset.h5_name)[0] + '/embeddings.h5'
+        self._checkpoint_folder = os.path.split(dset.h5_name)[0] + '/' + checkpoints_label + f'/checkpoints/{dset.dset_name}'
+        self.embedding_h5_name = os.path.split(dset.h5_name)[0] + '/' + checkpoints_label + '/embeddings.h5'
         
     @property
     def dataloader_sampler(self): return self._dataloader_sampler   
