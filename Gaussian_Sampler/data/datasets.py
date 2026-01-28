@@ -298,55 +298,24 @@ class Poisson_Sampled_PV_Embeddings():
         return h5py.File(self.embedding_h5_name, 'r')
     
     def _check_embedding_tree_structure(self, dset_name):
-        """Check and create embedding tree structure if needed."""
+        """Check and create embedding tree structure if needed, efficiently."""
         with h5py.File(self.embedding_h5_name, 'a') as f:
-            try: 
-                f.create_group(self.check)
-            except: 
-                pass
-            
-            try: 
-                f[self.check].create_group('scaled')
-            except: 
-                pass
-                        
-            try: 
-                f[self.check]['scaled'].create_dataset(
-                    dset_name+'_fits', 
-                    shape=(len(self.dset), self.num_fits, self.dset.shape[-1]), 
-                    dtype=np.float32
-                )
-            except: 
-                pass
-            try: 
-                f[self.check]['scaled'].create_dataset(
-                    dset_name+'_params', 
-                    shape=(len(self.dset), self.num_fits, self.num_params), 
-                    dtype=np.float32
-                )
-            except: 
-                pass
-                
-            try: 
-                f[self.check].create_group('unscaled')
-            except: 
-                pass
-            try: 
-                f[self.check]['unscaled'].create_dataset(
-                    dset_name+'_fits', 
-                    shape=(len(self.dset), self.num_fits, self.dset.shape[-1]), 
-                    dtype=np.float32
-                )
-            except: 
-                pass
-            try: 
-                f[self.check]['unscaled'].create_dataset(
-                    dset_name+'_params', 
-                    shape=(len(self.dset), self.num_fits, self.num_params), 
-                    dtype=np.float32
-                )
-            except: 
-                pass
+            # Ensure checkpoint group exists (created only if missing)
+            chk_grp = f.require_group(self.check)
+            scaled_grp = chk_grp.require_group('scaled')
+            unscaled_grp = chk_grp.require_group('unscaled')
+
+            # Helper for datasets
+            def ensure_dataset(g, name, shape):
+                if name not in g:
+                    g.create_dataset(name, shape=shape, dtype=np.float32)
+
+            # Ensure scaled datasets
+            ensure_dataset(scaled_grp, dset_name+'_fits', (len(self.dset), self.num_fits, self.dset.shape[-1]))
+            ensure_dataset(scaled_grp, dset_name+'_params', (len(self.dset), self.num_fits, self.num_params))
+            # Ensure unscaled datasets
+            ensure_dataset(unscaled_grp, dset_name+'_fits', (len(self.dset), self.num_fits, self.dset.shape[-1]))
+            ensure_dataset(unscaled_grp, dset_name+'_params', (len(self.dset), self.num_fits, self.num_params))
 
             f.flush()
     
@@ -378,7 +347,7 @@ class Poisson_Sampled_PV_Embeddings():
 
             f.flush()
     
-    def write_embeddings(self, noise_levels=[0], batch_size=100):
+    def write_embeddings(self, noise_level=0, batch_size=100):
         """Write embeddings to h5 file.
         
         Saved in folder with dataset scaling method (ie, '../../toy_dataset/l1_norm') 
@@ -400,15 +369,14 @@ class Poisson_Sampled_PV_Embeddings():
         Args:
             noise_levels (iterable, int): List of noise levels to write embeddings for.
         """
-        for noise_level in noise_levels:  # noise level integers
-            # write embeddings
-            self.model.configure_dataloader_sampler(sampler=None)
-            self.model.configure_dataloader(batch_size=batch_size)
-            self.dset.dset_index = noise_level
-            self._check_embedding_tree_structure(self.dset.dset_name)
-            
-            self._write_scaled_embedding()
-            self._unscale_embedding(self.dset.dset_name)
+        # write embeddings
+        self.model.configure_dataloader_sampler(sampler=None)
+        self.model.configure_dataloader(batch_size=batch_size)
+        self.dset.dset_index = noise_level
+        self._check_embedding_tree_structure(self.dset.dset_name)
+        
+        self._write_scaled_embedding()
+        self._unscale_embedding(self.dset.dset_name)
     
     def __len__(self):
         """Return the length of the dataset."""
