@@ -350,9 +350,11 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         # Set initial dataset index to match embedding noise level
         self.i_slider.value = self.dset.h5_keys().index(self.dset.dset_name)
         
-        # Create FigureWidgets for final (fitted) image and spectrum
-        self.fitted_img_fig = go.FigureWidget()
-        self.fitted_spec_fig = go.FigureWidget()
+        # Create FigureWidgets: original (img_fig, spec_fig from parent), summed fits, individual fit
+        self.summed_img_fig = go.FigureWidget()
+        self.summed_spec_fig = go.FigureWidget()
+        self.individual_img_fig = go.FigureWidget()
+        self.individual_spec_fig = go.FigureWidget()
         self.param_fig_list = [go.FigureWidget() for _ in range(self.emb.model.num_params)]
 
     @property
@@ -374,6 +376,32 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         params = [v for k, v in self.dset.pv_param_classes.items()]
         return np.array(params)
 
+    def _histogram_bounds_from_fitter(self):
+        """Get x-axis bounds for each parameter from the dataset's pv_fitter (Amplitude, Mean, FWHM, nu)."""
+        fitter = getattr(self.dset, 'pv_fitter', None)
+        if fitter is not None and hasattr(fitter, 'limits'):
+            limits = fitter.limits  # [A_max, x_max, w_max] typically [1, 1, 975]
+            return [[0, float(limits[0])], [0, float(limits[1])], [0, float(limits[2])], [0, 1.0]]
+        return [[0, 1], [0, 1], [0, 975], [0, 1]]  # fallback
+
+    def _scale_amplitude_for_histogram(self, params, true_params, par):
+        """Scale amplitude (par=0) to [0,1] using same scaling as datasets: divide by maxes."""
+        if par != 0:
+            return params[:, :, :, par].flatten(), true_params[par].flatten()
+        n, m = self.dset.shape[0], self.dset.shape[1]
+        # Same as datasets: scaled = unscaled / maxes (unscale_data does unscaled = maxes * scaled)
+        if not hasattr(self.dset, 'maxes') or self.dset.maxes is None:
+            try:
+                self.dset.calculate_maxes()
+            except Exception:
+                return params[:, :, :, 0].flatten(), true_params[0].flatten()
+        maxes = np.asarray(self.dset.maxes)
+        maxes_2d = maxes.reshape(n, m, 1) if maxes.ndim == 1 else maxes.reshape(n, m, 1)
+        fitted_scaled = params[:, :, :, 0] / maxes_2d
+        max_global = float(np.max(maxes))
+        true_scaled = np.asarray(true_params[0]) / max_global if max_global > 0 else np.asarray(true_params[0])
+        return fitted_scaled.flatten(), true_scaled.flatten()
+
     def fits_max(self): #uses cached data
         """Get maximum value from fits for scaling"""
         fits, _ = self.select_fits_params(self.checkpoint_index)
@@ -389,47 +417,94 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
     ############################################ Plotting functions
 
     def _update_fits_params(self):
-        """Update Final Image and Final Spectrum plots."""
+        """Update three images (original, summed fits, individual fit), three spectra, and four histograms."""
         i, s = self.i_slider.value, self.s_slider.value
         f = self.f_slider.value
         x, y = self.x, self.y
         self.checkpoint_index = self.i_slider.value
-        
+
         fits, params = self.select_fits_params(checkpoint_index=self.checkpoint_index)
         fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
-        
-        # Update fitted image
-        data_fit = np.flipud(fits[..., f, s].T)
-        with self.fitted_img_fig.batch_update():
-            self.fitted_img_fig.data[0].z = data_fit
-            self.fitted_img_fig.data[0].zmax = self.fits_max()
-            self.fitted_img_fig.data[1].x = [x]
-            self.fitted_img_fig.data[1].y = [y]
-            self.fitted_img_fig.layout.title.text = f'Sampled rate: {self.dset_list[i]}, Fit {f}'
-        
-        # Update fitted spectrum
-        zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-        spectrum_fit = fits[y, x, f]
-        spectrum_sum = fits[y, x].sum(axis=0)  # Sum of all channels
-        zero_spectrum = zero_datacube[y, x]  # Zero noise line
-        with self.fitted_spec_fig.batch_update():
-            self.fitted_spec_fig.data[0].y = zero_spectrum
-            self.fitted_spec_fig.data[1].y = spectrum_fit
-            self.fitted_spec_fig.data[2].y = spectrum_sum
-            # Update vertical line
-            self.fitted_spec_fig.layout.shapes[0].x0 = s
-            self.fitted_spec_fig.layout.shapes[0].x1 = s
-            self.fitted_spec_fig.layout.title.text = f'Fitted Spectrum - Fit {f}'
 
-        # Update parameter images
+        # 1) Original image and spectrum are updated by _update_plots() (img_fig, spec_fig).
+
+        # 2) Summed fits image (sum over fit channels at spectral slice s)
+        data_sum = np.flipud(fits[:, :, :, s].sum(axis=2).T)
+        with self.summed_img_fig.batch_update():
+            self.summed_img_fig.data[0].z = data_sum
+            self.summed_img_fig.data[0].zmax = self.fits_max()
+            self.summed_img_fig.data[1].x = [x]
+            self.summed_img_fig.data[1].y = [y]
+            self.summed_img_fig.layout.title.text = f'Summed fits - {self.dset_list[i]}'
+
+        # 3) Individual fit image
+        data_fit = np.flipud(fits[..., f, s].T)
+        with self.individual_img_fig.batch_update():
+            self.individual_img_fig.data[0].z = data_fit
+            self.individual_img_fig.data[0].zmax = self.fits_max()
+            self.individual_img_fig.data[1].x = [x]
+            self.individual_img_fig.data[1].y = [y]
+            self.individual_img_fig.layout.title.text = f'Individual fit {f} - {self.dset_list[i]}'
+
+        # 4) Summed fits spectrum
+        zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
+        zero_spectrum = zero_datacube[y, x]
+        spectrum_sum = fits[y, x].sum(axis=0)
+        with self.summed_spec_fig.batch_update():
+            self.summed_spec_fig.data[0].y = zero_spectrum
+            self.summed_spec_fig.data[1].y = spectrum_sum
+            self.summed_spec_fig.layout.title.text = 'Summed fits spectrum'
+            if self.summed_spec_fig.layout.shapes:
+                self.summed_spec_fig.layout.shapes[0].x0 = s
+                self.summed_spec_fig.layout.shapes[0].x1 = s
+
+        # 5) Individual fit spectrum
+        spectrum_fit = fits[y, x, f]
+        with self.individual_spec_fig.batch_update():
+            self.individual_spec_fig.data[0].y = zero_spectrum
+            self.individual_spec_fig.data[1].y = spectrum_fit
+            self.individual_spec_fig.layout.shapes[0].x0 = s
+            self.individual_spec_fig.layout.shapes[0].x1 = s
+            self.individual_spec_fig.layout.title.text = f'Individual fit {f} spectrum'
+
+        # 6) Parameter histograms: fitted bars + vertical lines at true param values
+        true_params = self.select_dset_params()
+        n_bins = 50
         for par in range(self.emb.model.num_params):
-            data_param = np.flipud(params[:, :, f, par].T)
+            fitted_flat, true_flat = self._scale_amplitude_for_histogram(params, true_params, par)
+            # Use data range; for amplitude (par=0) clamp to [0, 1]
+            v_min = float(np.min(np.r_[fitted_flat, true_flat]))
+            v_max = float(np.max(np.r_[fitted_flat, true_flat]))
+            if v_max <= v_min:
+                v_max = v_min + 1.0
+            pad = (v_max - v_min) * 0.05 if v_max > v_min else 0.01
+            v_min -= pad
+            v_max += pad
+            if par == 0:  # Amplitude: clamp x-axis to [0, 1]
+                v_min = max(0.0, v_min)
+                v_max = min(1.0, v_max)
+                if v_max <= v_min:
+                    v_max = 1.0
+                    v_min = 0.0
+            bin_edges = np.linspace(v_min, v_max, n_bins + 1)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            bin_width = (v_max - v_min) / n_bins
+            counts_fitted, _ = np.histogram(fitted_flat, bins=bin_edges)
+            # Vertical lines using add_vline (thinner than spectrum)
+            vline_shapes = [
+                dict(type='line', x0=float(v), x1=float(v), y0=0, y1=1, yref='paper',
+                     line=dict(color='black', width=1))
+                for v in true_flat
+            ]
             with self.param_fig_list[par].batch_update():
-                self.param_fig_list[par].data[0].z = data_param
-                self.param_fig_list[par].data[0].zmax = self.params_max(par, f)
-                self.param_fig_list[par].data[1].x = [x]
-                self.param_fig_list[par].data[1].y = [y]
+                self.param_fig_list[par].data[0].x = bin_centers
+                self.param_fig_list[par].data[0].y = counts_fitted
+                self.param_fig_list[par].data[0].width = bin_width
+            self.param_fig_list[par].update_layout(
+                xaxis=dict(range=[v_min, v_max]),
+                shapes=vline_shapes
+            )
 
     def _update_fits_plots(self, change=None):
         """Update all fits plots by calling individual update functions."""
@@ -472,97 +547,121 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         
-        # Only initialize fitted figures if they're empty (like parent class does for batch figures)
-        if len(self.fitted_img_fig.data) == 0:
-            # Summed image
-            data_sum = np.flipud(fits.sum(axis=2).T)
-            self.fitted_img_fig.add_trace(go.Heatmap(
+        # Initialize three images and three spectra if empty
+        if len(self.summed_img_fig.data) == 0:
+            # 1) Original image and spectrum: already in img_fig, spec_fig (from _init_figures).
+
+            # 2) Summed fits image (sum over fit channels at spectral slice s)
+            data_sum = np.flipud(fits[:, :, :, s].sum(axis=2).T)
+            self.summed_img_fig.add_trace(go.Heatmap(
                 z=data_sum, colorscale='Viridis', zmin=0, zmax=self.fits_max(),
                 colorbar=dict(title='Intensity')
             ))
-            self.fitted_img_fig.add_trace(go.Scatter(
+            self.summed_img_fig.add_trace(go.Scatter(
                 x=[x], y=[y], mode='markers',
-                marker=dict(color='red', size=10), 
+                marker=dict(color='red', size=10),
             ))
-            self.fitted_img_fig.data[0].on_click(self._handle_fits_click)
-            self.fitted_img_fig.update_layout(
-                title=f'Summed Image',
+            self.summed_img_fig.data[0].on_click(self._handle_fits_click)
+            self.summed_img_fig.update_layout(
+                title='Summed fits',
                 xaxis_title='X Position', yaxis_title='Y Position',
                 width=400, height=400,
                 showlegend=False
             )
-            
-            # Summed spectrum
-            # Add solid lines first, then dotted lines (so dotted appear on top)
-            zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-            spectrum_sum = fits[y, x].sum(axis=0)  # Sum of all channels
-            zero_spectrum = zero_datacube[y, x]  # Zero noise line
-            self.fitted_spec_fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean', 
-                                                    line=dict(color='green')))
-            self.fitted_spec_fig.add_trace(go.Scatter(y=spectrum_sum, mode='lines', name='Sum', 
-                                                    line=dict(color='orange', dash='dot')))
-            self.fitted_spec_fig.update_layout(
-                title=f'Summed Spectrum',
-                xaxis_title='Spectrum Value', yaxis_title='Intensity',
-                yaxis=dict(range=[0, self.fits_max()]),
-                xaxis=dict(range=[0, self.dset.spec_len]),
-                width=400, height=400,
-                showlegend=False
-            )
-            
-            # Fitted image
+
+            # 3) Individual fit image
             data_fit = np.flipud(fits[..., f, s].T)
-            self.fitted_img_fig.add_trace(go.Heatmap(
+            self.individual_img_fig.add_trace(go.Heatmap(
                 z=data_fit, colorscale='Viridis', zmin=0, zmax=self.fits_max(),
                 colorbar=dict(title='Intensity')
             ))
-            self.fitted_img_fig.add_trace(go.Scatter(
+            self.individual_img_fig.add_trace(go.Scatter(
                 x=[x], y=[y], mode='markers',
-                marker=dict(color='red', size=10), 
+                marker=dict(color='red', size=10),
             ))
-            self.fitted_img_fig.data[0].on_click(self._handle_fits_click)
-            self.fitted_img_fig.update_layout(
-                title=f'Fit {f}',
+            self.individual_img_fig.data[0].on_click(self._handle_fits_click)
+            self.individual_img_fig.update_layout(
+                title=f'Individual fit {f}',
                 xaxis_title='X Position', yaxis_title='Y Position',
                 width=400, height=400,
                 showlegend=False
             )
-            
-            # Final (fitted) spectrum
-            # Add solid lines first, then dotted lines (so dotted appear on top)
+
+            # 4) Summed fits spectrum
             zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-            spectrum_fit = fits[y, x, f]
-            zero_spectrum = zero_datacube[y, x]  # Zero noise line
-            self.fitted_spec_fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean', 
-                                                    line=dict(color='green')))
-            self.fitted_spec_fig.add_trace(go.Scatter(y=spectrum_fit, mode='lines', name=f'Fit {f}', 
-                                                    line=dict(color='red', dash='dash')))
-            self.fitted_spec_fig.add_vline(x=s, line=dict(color='black', width=2))
-            self.fitted_spec_fig.update_layout(
-                title=f'Spectrum - Fit {f}',
+            zero_spectrum = zero_datacube[y, x]
+            spectrum_sum = fits[y, x].sum(axis=0)
+            self.summed_spec_fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean',
+                                                     line=dict(color='green')))
+            self.summed_spec_fig.add_trace(go.Scatter(y=spectrum_sum, mode='lines', name='Sum',
+                                                     line=dict(color='orange', dash='dot')))
+            self.summed_spec_fig.add_vline(x=s, line=dict(color='black', width=2))
+            self.summed_spec_fig.update_layout(
+                title='Summed fits spectrum',
                 xaxis_title='Spectrum Value', yaxis_title='Intensity',
                 yaxis=dict(range=[0, self.fits_max()]),
                 xaxis=dict(range=[0, self.dset.spec_len]),
                 width=400, height=400,
-                showlegend=False
+                showlegend=True
             )
-            
-            # Parameter histograms for fitted and true
+
+            # 5) Individual fit spectrum
+            spectrum_fit = fits[y, x, f]
+            self.individual_spec_fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean',
+                                                         line=dict(color='green')))
+            self.individual_spec_fig.add_trace(go.Scatter(y=spectrum_fit, mode='lines', name=f'Fit {f}',
+                                                         line=dict(color='red', dash='dash')))
+            self.individual_spec_fig.add_vline(x=s, line=dict(color='black', width=2))
+            self.individual_spec_fig.update_layout(
+                title=f'Individual fit {f} spectrum',
+                xaxis_title='Spectrum Value', yaxis_title='Intensity',
+                yaxis=dict(range=[0, self.fits_max()]),
+                xaxis=dict(range=[0, self.dset.spec_len]),
+                width=400, height=400,
+                showlegend=True
+            )
+
+            # 6) Parameter histograms: fitted bars + vertical lines at true param values
+            true_params = self.select_dset_params()
+            n_bins = 50
             for par in range(self.emb.model.num_params):
-                data_param = np.flipud(params[:, :, f, par].T)
-                self.param_fig_list[par].add_trace(go.Heatmap(
-                    z=data_param, colorscale='Viridis', zmin=0, zmax=self.params_max(par, f),
-                    colorbar=dict(title='Value')
+                fitted_flat, true_flat = self._scale_amplitude_for_histogram(params, true_params, par)
+                # Use data range; for amplitude (par=0) clamp to [0, 1]
+                v_min = float(np.min(np.r_[fitted_flat, true_flat]))
+                v_max = float(np.max(np.r_[fitted_flat, true_flat]))
+                if v_max <= v_min:
+                    v_max = v_min + 1.0
+                pad = (v_max - v_min) * 0.05 if v_max > v_min else 0.01
+                v_min -= pad
+                v_max += pad
+                if par == 0:  # Amplitude: clamp x-axis to [0, 1]
+                    v_min = max(0.0, v_min)
+                    v_max = min(1.0, v_max)
+                    if v_max <= v_min:
+                        v_max = 1.0
+                        v_min = 0.0
+                bin_edges = np.linspace(v_min, v_max, n_bins + 1)
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                bin_width = (v_max - v_min) / n_bins
+                counts_fitted, _ = np.histogram(fitted_flat, bins=bin_edges)
+                self.param_fig_list[par].add_trace(go.Bar(
+                    x=bin_centers, y=counts_fitted, name='Fitted', opacity=0.5,
+                    marker_color='steelblue', width=bin_width
                 ))
+                # Vertical lines using add_vline (thinner than spectrum)
+                for v in true_flat:
+                    self.param_fig_list[par].add_vline(x=float(v), line=dict(color='black', width=1))
+                # Dummy trace for legend (vlines are layout shapes and don't appear in legend)
                 self.param_fig_list[par].add_trace(go.Scatter(
-                    x=[x], y=[y], mode='markers',
-                    marker=dict(color='red', size=10),
+                    x=[None], y=[None], mode='lines', name='True',
+                    line=dict(color='black', width=1)
                 ))
-                self.param_fig_list[par].data[0].on_click(self._handle_fits_click)
                 self.param_fig_list[par].update_layout(
                     title=f'{self.parameters_list[par]}',
-                    xaxis_title='X Position', yaxis_title='Y Position',
-                    width=350, height=350
+                    xaxis_title='Value', yaxis_title='Count',
+                    xaxis=dict(range=[v_min, v_max]),
+                    width=350, height=350,
+                    showlegend=True
                 )
 
     def layout_fits_params(self):
@@ -571,13 +670,14 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         
         # Enable legends for spectrum plots
         self.spec_fig.update_layout(showlegend=True)
-        self.fitted_spec_fig.update_layout(showlegend=True)
-  
-        # Connect widgets to update function (updates both original and fitted plots)
+        self.summed_spec_fig.update_layout(showlegend=True)
+        self.individual_spec_fig.update_layout(showlegend=True)
+
+        # Connect widgets to update function
         for slider in [self.i_slider, self.s_slider, self.f_slider]:
             slider.observe(self._update_fits_plots, names='value')
-        
-        # Connect click handlers for images
+
+        # Connect click handlers for images (original, summed, individual)
         def handle_img_click(trace, points, selector):
             if points.xs and points.ys:
                 x_clicked = points.xs[0]
@@ -587,37 +687,37 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
                 self.x = max(0, min(self.x, self.dset.shape[0] - 1))
                 self.y = max(0, min(self.y, self.dset.shape[1] - 1))
                 self._update_fits_plots()
-        
+
         self.img_fig.data[0].on_click(handle_img_click)
-        self.fitted_img_fig.data[0].on_click(handle_img_click)
-        
-        # Connect click handlers for spectra
+        self.summed_img_fig.data[0].on_click(handle_img_click)
+        self.individual_img_fig.data[0].on_click(handle_img_click)
+
+        # Connect click handlers for spectra (original, summed, individual)
         def handle_spec_click(trace, points, selector):
             if points.xs:
                 s_clicked = points.xs[0]
                 s_new = int(round(s_clicked))
                 s_new = max(0, min(s_new, self.dset.shape[2] - 1))
                 self.s_slider.value = s_new
-        
+
         self.spec_fig.data[0].on_click(handle_spec_click)
         self.spec_fig.data[1].on_click(handle_spec_click)
-        self.fitted_spec_fig.data[0].on_click(handle_spec_click)
-        if len(self.fitted_spec_fig.data) > 1:
-            self.fitted_spec_fig.data[1].on_click(handle_spec_click)
-        if len(self.fitted_spec_fig.data) > 2:
-            self.fitted_spec_fig.data[2].on_click(handle_spec_click)
-            
+        self.summed_spec_fig.data[0].on_click(handle_spec_click)
+        self.summed_spec_fig.data[1].on_click(handle_spec_click)
+        self.individual_spec_fig.data[0].on_click(handle_spec_click)
+        self.individual_spec_fig.data[1].on_click(handle_spec_click)
+
         sliders = widgets.VBox([
             widgets.HBox([self.i_slider, self.s_slider, self.f_slider]),
-            widgets.HTML(value='<i>Click on the image to select x, y coordinates</i>')
+            widgets.HTML(value='<i>Click on an image to select x, y; click on a spectrum to select spectral index</i>')
         ])
-        # Left column: images (top: original, bottom: final)
-        # Right column: spectra (top: initial, bottom: final)
-        left_col = widgets.VBox([self.img_fig, self.fitted_img_fig])
-        right_col = widgets.VBox([self.spec_fig, self.fitted_spec_fig])
+        # Three images: original, summed fits, individual fit
+        left_col = widgets.VBox([self.img_fig, self.summed_img_fig, self.individual_img_fig])
+        # Three spectra: original, summed fits, individual fit
+        right_col = widgets.VBox([self.spec_fig, self.summed_spec_fig, self.individual_spec_fig])
         main_row = widgets.HBox([left_col, right_col])
         param_plots = widgets.HBox(self.param_fig_list)
-        
+
         return widgets.VBox([sliders, main_row, param_plots])
 
     ############################################ Batch fits plotting
