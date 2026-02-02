@@ -53,46 +53,6 @@ class Poisson_Sampled_PV_viz:
 
     ############################################ Plotting functions
 
-    def plot_datacube_img(self, i, s, x, y):
-        datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = datacube[:, :, s]
-
-        fig = go.Figure()
-        fig.add_trace(go.Heatmap(
-            z=data_, colorscale='Viridis', zmin=0, zmax=self.datacube_max(i),
-            colorbar=dict(title='Intensity')
-        ))
-        # Add red dot for selected position
-        fig.add_trace(go.Scatter(
-            x=[x], y=[y], mode='markers',
-            marker=dict(color='red', size=10),
-        ))
-        fig.update_layout(
-            title=f'Sampled rate: {self.dset_list[i]}',
-            xaxis_title='X Position', yaxis_title='Y Position',
-            width=400, height=400
-        )
-        return fig
-
-    def plot_datacube_spectrum(self, i, x, y, s):
-        datacube = self.select_datacube(i).reshape(self.dset.shape)
-        zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-        spectrum = datacube[y, x]
-        zero_spectrum = zero_datacube[y, x]
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=spectrum, mode='lines', name='Noisy', line=dict(color='blue')))
-        fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean', line=dict(color='green')))
-        # Vertical line at spectral position
-        fig.add_vline(x=s, line=dict(color='black', width=2))
-        fig.update_layout(
-            xaxis_title='Spectrum Value', yaxis_title='Intensity',
-            yaxis=dict(range=[0, self.datacube_max(i)]),
-            xaxis=dict(range=[0, self.dset.spec_len]),
-            width=400, height=400
-        )
-        return fig
-
     def _update_plots(self, change=None):
         i, s = self.i_slider.value, self.s_slider.value
         x, y = self.x, self.y
@@ -228,49 +188,6 @@ class Poisson_Sampled_PV_viz:
 
     ############################################ Batch plotting
 
-    def plot_batch_points(self, i, s, checked):
-        datacube = self.select_datacube(i).reshape(self.dset.shape)
-        data_ = datacube[:, :, s]
-        pts = self.get_points_idx()
-
-        fig = go.Figure()
-        fig.add_trace(go.Heatmap(
-            z=data_, colorscale='Viridis', zmin=0, zmax=self.datacube_max(i),
-            colorbar=dict(title='Intensity')
-        ))
-        for p, pt in enumerate(pts):
-            xs, ys = zip(*pt) if pt else ([], [])
-            alpha = 1.0 if p in checked else 0.2
-            fig.add_trace(go.Scatter(
-                x=xs, y=ys, mode='markers',
-                marker=dict(color=self.colors[p % len(self.colors)], size=6, opacity=alpha),
-                name=f'Batch {p}'
-            ))
-        fig.update_layout(
-            title=f'Sampled rate: {self.dset_list[i]}',
-            xaxis_title='X Position', yaxis_title='Y Position',
-            width=450, height=450
-        )
-        return fig
-
-    def plot_batch_spectrum(self, i, checked):
-        data = self.get_points_data(i)
-        fig = go.Figure()
-        for d, dat in enumerate(data):
-            alpha = 1.0 if d in checked else 0.2
-            fig.add_trace(go.Scatter(
-                y=dat.mean(axis=0), mode='lines',
-                line=dict(color=self.colors[d % len(self.colors)], width=1),
-                opacity=alpha, name=f'Batch {d}'
-            ))
-        fig.update_layout(
-            xaxis_title='Spectrum Value', yaxis_title='Intensity',
-            yaxis=dict(range=[0, max(self.dset.maxes)]),
-            xaxis=dict(range=[0, self.dset.spec_len]),
-            width=450, height=450
-        )
-        return fig
-
     def _update_batch_plots(self, change=None):
         i = self.i_slider.value
         s = self.s_slider.value
@@ -396,7 +313,7 @@ class Poisson_Sampled_PV_viz:
         legend_items = [f'<div style="display: inline-flex; align-items: center; margin: 2px 5px;"><div style="width: 12px; height: 12px; background-color: {self.colors[i % len(self.colors)]}; margin-right: 5px; border-radius: 50%; border: 1px solid black;"></div><span>{i}</span></div>' 
                         for i in range(min(num_batches, len(self.colors)))]
         legend_html = widgets.HTML(value='<div style="border: 1px solid black; padding: 10px; background-color: white;"><b>Batch Colors</b><br><div style="display: flex; flex-wrap: wrap;">' + ''.join(legend_items) + '</div></div>')
-        
+
         sliders = widgets.VBox([
             widgets.HBox([self.i_slider, self.s_slider]),
             widgets.HBox([self.batch_checkboxes, self.new_batch_button, legend_html])
@@ -406,134 +323,81 @@ class Poisson_Sampled_PV_viz:
 
 
 
-class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
+class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why doesn't the embedding update when noise level changes?
     '''Interactive visualization for embeddings using Plotly and ipywidgets'''
     
-    def __init__(self, model, emb, dset, **kwargs):
+    def __init__(self, model, emb, dset, checkpoints=[], **kwargs):
+        '''
+        Args:
+            model: Model object (Fitter_AE) that has embedding_h5_name attribute. must be initialized
+            emb: Poisson_Sampled_PV_Embeddings object. must be initialized
+            dset: Poisson_Sampled_PV_Dataset object. must be initialized
+            checkpoints: List of checkpoint paths. Should be paths from checkpoints folder, with a checkpoint per sample rate. 
+                eg ['~/new_mount/gaussian_sampler/toy_dataset/max_norm/gaussian_sampler/checkpoints/00_01.000_sample_rate/(2026-01-27, 13:23:52)_epoch:0050_lr:0.00001_trainloss:0.0002.pkl',
+                    '~/new_mount/gaussian_sampler/toy_dataset/max_norm/gaussian_sampler/checkpoints/01_00.785_sample_rate/(2026-01-27, 13:27:16)_epoch:0050_lr:0.00001_trainloss:0.0014.pkl',
+                    '~/new_mount/gaussian_sampler/toy_dataset/max_norm/gaussian_sampler/checkpoints/02_00.616_sample_rate/(2026-01-27, 13:30:41)_epoch:0050_lr:0.00001_trainloss:0.0015.pkl',
+                    ...
+                    '~/new_mount/gaussian_sampler/toy_dataset/max_norm/gaussian_sampler/checkpoints/19_00.010_sample_rate/(2026-01-27, 14:29:22)_epoch:0050_lr:0.00001_trainloss:0.0020.pkl']
+        '''
         super().__init__(dset, model._dataloader_sampler)
-        self.parameters_list = ['Amplitude', 'Mean', 'FWHM', 'nu']
-        self.model = model
+        self.checkpoints = checkpoints
+        self._checkpoint_index = 0
         self.emb = emb
+        self.parameters_list = ['Amplitude', 'Mean', 'FWHM', 'nu']
         
         # Add fit channel slider
-        self.f_slider = widgets.IntSlider(description='Fit channel', value=0, min=0, max=self.model.num_fits-1)
+        self.f_slider = widgets.IntSlider(description='Fit channel', value=0, min=0, max=self.emb.model.num_fits-1)
         # Set initial dataset index to match embedding noise level
         self.i_slider.value = self.dset.h5_keys().index(self.dset.dset_name)
         
         # Create FigureWidgets for final (fitted) image and spectrum
         self.fitted_img_fig = go.FigureWidget()
         self.fitted_spec_fig = go.FigureWidget()
-        self.param_fig_list = [go.FigureWidget() for _ in range(self.model.num_params)]
-        
-    @lru_cache(maxsize=10)
-    def select_fits_params(self, which=slice(None)):
-        '''
-        returns fits, params, shape (10000, s), (10000, 4)
-        '''
-        return self.emb[:][which] # (10000, s), (10000, 4)
+        self.param_fig_list = [go.FigureWidget() for _ in range(self.emb.model.num_params)]
 
-    def fits_max(self):
+    @property
+    def checkpoint_index(self): 
+        return self._checkpoint_index
+    
+    @checkpoint_index.setter
+    def checkpoint_index(self, checkpoint_index):
+        self._checkpoint_index = checkpoint_index
+        self.emb.checkpoint = self.checkpoints[checkpoint_index]
+        
+    
+    @lru_cache(maxsize=10)    
+    def select_fits_params(self, checkpoint_index=0):
+        ''' Returns fits or params using the embeddings class __getitem__ method.'''
+        return self.emb[:] 
+
+    def select_dset_params(self):
+        params = [v for k, v in self.dset.pv_param_classes.items()]
+        return np.array(params)
+
+    def fits_max(self): #uses cached data
         """Get maximum value from fits for scaling"""
-        fits = self.select_fits_params(which=0)
+        fits, _ = self.select_fits_params(self.checkpoint_index)
+        # fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         return float(fits.max())
 
     def params_max(self, par, f):
         """Get maximum value from parameters for scaling"""
-        params = self.select_fits_params(which=1).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
+        _, params = self.select_fits_params(self.checkpoint_index)
+        params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         return float(params[:, :, f, par].max())
 
-    ############################################ Fits plotting functions
-
-    def plot_fits_sum_img(self, s):
-        fits = self.select_fits_params(which=0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        data_ = np.flipud(fits[..., s].sum(axis=-1).T)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Heatmap(
-            z=data_, colorscale='Viridis', zmin=0, zmax=self.fits_max(),
-            colorbar=dict(title='Intensity')
-        ))
-        fig.update_layout(
-            title='Fitted Intensity',
-            xaxis_title='X Position', yaxis_title='Y Position',
-            width=400, height=400
-        )
-        return fig
-
-    def plot_fits_img(self, s, f):
-        fits = self.select_fits_params(which=0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        data_ = np.flipud(fits[..., f, s].T)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Heatmap(
-            z=data_, colorscale='Viridis', zmin=0, zmax=self.fits_max(),
-            colorbar=dict(title='Intensity')
-        ))
-        fig.update_layout(
-            title=f'Fit {f}',
-            xaxis_title='X Position', yaxis_title='Y Position',
-            width=400, height=400
-        )
-        return fig
-
-    def plot_fit_sum_spectrum(self, x, y):
-        fits = self.select_fits_params(0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        spectrum = fits[x, y].sum(axis=0)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=spectrum, mode='lines', name='Fitted', line=dict(color='red')))
-        fig.update_layout(
-            title='Fitted Spectrum',
-            xaxis_title='Spectrum Value', yaxis_title='Intensity',
-            yaxis=dict(range=[0, self.fits_max()]),
-            xaxis=dict(range=[0, self.dset.spec_len]),
-            width=400, height=400
-        )
-        return fig
-
-    def plot_fits_spectrum(self, x, y, f):
-        fits = self.select_fits_params(0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        spectrum = fits[x, y, f]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=spectrum, mode='lines', name=f'Fit {f}', 
-                                 line=dict(color='red', dash='dash')))
-        fig.update_layout(
-            title=f'Fitted Spectrum {f}',
-            xaxis_title='Spectrum Value', yaxis_title='Intensity',
-            yaxis=dict(range=[0, self.fits_max()]),
-            xaxis=dict(range=[0, self.dset.spec_len]),
-            width=400, height=400
-        )
-        return fig
-
-    def plot_params_img(self, par, f):
-        params = self.select_fits_params(1).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        data_ = np.flipud(params[:, :, f, par].T)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Heatmap(
-            z=data_, colorscale='Viridis', zmin=0, zmax=self.params_max(par, f),
-            colorbar=dict(title='Value')
-        ))
-        fig.update_layout(
-            title=f'{self.parameters_list[par]}',
-            xaxis_title='X Position', yaxis_title='Y Position',
-            width=200, height=200
-        )
-        return fig
-
-    ############################################ Update functions
+    ############################################ Plotting functions
 
     def _update_fits_params(self):
         """Update Final Image and Final Spectrum plots."""
         i, s = self.i_slider.value, self.s_slider.value
         f = self.f_slider.value
         x, y = self.x, self.y
+        self.checkpoint_index = self.i_slider.value
         
-        fits, params = self.select_fits_params()
-        fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
+        fits, params = self.select_fits_params(checkpoint_index=self.checkpoint_index)
+        fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
+        params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         
         # Update fitted image
         data_fit = np.flipud(fits[..., f, s].T)
@@ -542,26 +406,27 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
             self.fitted_img_fig.data[0].zmax = self.fits_max()
             self.fitted_img_fig.data[1].x = [x]
             self.fitted_img_fig.data[1].y = [y]
-            self.fitted_img_fig.layout.title.text = f'Final Image - Fit {f}'
+            self.fitted_img_fig.layout.title.text = f'Sampled rate: {self.dset_list[i]}, Fit {f}'
         
         # Update fitted spectrum
         zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-        spectrum_fit = fits[x, y, f]
-        spectrum_sum = fits[x, y].sum(axis=0)  # Sum of all channels
+        spectrum_fit = fits[y, x, f]
+        spectrum_sum = fits[y, x].sum(axis=0)  # Sum of all channels
         zero_spectrum = zero_datacube[y, x]  # Zero noise line
         with self.fitted_spec_fig.batch_update():
-            self.fitted_spec_fig.data[0].y = spectrum_fit
-            self.fitted_spec_fig.data[1].y = spectrum_sum
-            self.fitted_spec_fig.data[2].y = zero_spectrum
+            self.fitted_spec_fig.data[0].y = zero_spectrum
+            self.fitted_spec_fig.data[1].y = spectrum_fit
+            self.fitted_spec_fig.data[2].y = spectrum_sum
             # Update vertical line
             self.fitted_spec_fig.layout.shapes[0].x0 = s
             self.fitted_spec_fig.layout.shapes[0].x1 = s
             self.fitted_spec_fig.layout.title.text = f'Fitted Spectrum - Fit {f}'
 
         # Update parameter images
-        for par in range(self.model.num_params):
+        for par in range(self.emb.model.num_params):
+            data_param = np.flipud(params[:, :, f, par].T)
             with self.param_fig_list[par].batch_update():
-                self.param_fig_list[par].data[0].z = params[:, :, f, par]
+                self.param_fig_list[par].data[0].z = data_param
                 self.param_fig_list[par].data[0].zmax = self.params_max(par, f)
                 self.param_fig_list[par].data[1].x = [x]
                 self.param_fig_list[par].data[1].y = [y]
@@ -590,6 +455,8 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
         i, s = self.i_slider.value, self.s_slider.value
         f = self.f_slider.value
         x, y = self.x, self.y
+        self.checkpoint_index = self.i_slider.value
+
         
         # Initialize parent figures (original image and spectrum) only if empty
         if not hasattr(self, 'img_fig') or len(self.img_fig.data) == 0:
@@ -601,12 +468,48 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
             showlegend=False
         )
         
-        fits, params = self.select_fits_params()
-        fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
-        params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
+        fits, params = self.select_fits_params(checkpoint_index=self.checkpoint_index)
+        fits = fits.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
+        params = params.reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         
         # Only initialize fitted figures if they're empty (like parent class does for batch figures)
         if len(self.fitted_img_fig.data) == 0:
+            # Summed image
+            data_sum = np.flipud(fits.sum(axis=2).T)
+            self.fitted_img_fig.add_trace(go.Heatmap(
+                z=data_sum, colorscale='Viridis', zmin=0, zmax=self.fits_max(),
+                colorbar=dict(title='Intensity')
+            ))
+            self.fitted_img_fig.add_trace(go.Scatter(
+                x=[x], y=[y], mode='markers',
+                marker=dict(color='red', size=10), 
+            ))
+            self.fitted_img_fig.data[0].on_click(self._handle_fits_click)
+            self.fitted_img_fig.update_layout(
+                title=f'Summed Image',
+                xaxis_title='X Position', yaxis_title='Y Position',
+                width=400, height=400,
+                showlegend=False
+            )
+            
+            # Summed spectrum
+            # Add solid lines first, then dotted lines (so dotted appear on top)
+            zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
+            spectrum_sum = fits[y, x].sum(axis=0)  # Sum of all channels
+            zero_spectrum = zero_datacube[y, x]  # Zero noise line
+            self.fitted_spec_fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean', 
+                                                    line=dict(color='green')))
+            self.fitted_spec_fig.add_trace(go.Scatter(y=spectrum_sum, mode='lines', name='Sum', 
+                                                    line=dict(color='orange', dash='dot')))
+            self.fitted_spec_fig.update_layout(
+                title=f'Summed Spectrum',
+                xaxis_title='Spectrum Value', yaxis_title='Intensity',
+                yaxis=dict(range=[0, self.fits_max()]),
+                xaxis=dict(range=[0, self.dset.spec_len]),
+                width=400, height=400,
+                showlegend=False
+            )
+            
             # Fitted image
             data_fit = np.flipud(fits[..., f, s].T)
             self.fitted_img_fig.add_trace(go.Heatmap(
@@ -619,35 +522,33 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
             ))
             self.fitted_img_fig.data[0].on_click(self._handle_fits_click)
             self.fitted_img_fig.update_layout(
-                title=f'Final Image - Fit {f}',
+                title=f'Fit {f}',
                 xaxis_title='X Position', yaxis_title='Y Position',
                 width=400, height=400,
                 showlegend=False
             )
             
             # Final (fitted) spectrum
+            # Add solid lines first, then dotted lines (so dotted appear on top)
             zero_datacube = self.select_zero_datacube(i).reshape(self.dset.shape)
-            spectrum_fit = fits[x, y, f]
-            spectrum_sum = fits[x, y].sum(axis=0)  # Sum of all channels
+            spectrum_fit = fits[y, x, f]
             zero_spectrum = zero_datacube[y, x]  # Zero noise line
-            self.fitted_spec_fig.add_trace(go.Scatter(y=spectrum_fit, mode='lines', name=f'Fit {f}', 
-                                                    line=dict(color='red', dash='dash')))
-            self.fitted_spec_fig.add_trace(go.Scatter(y=spectrum_sum, mode='lines', name='Sum', 
-                                                    line=dict(color='orange', dash='dot')))
             self.fitted_spec_fig.add_trace(go.Scatter(y=zero_spectrum, mode='lines', name='Clean', 
                                                     line=dict(color='green')))
+            self.fitted_spec_fig.add_trace(go.Scatter(y=spectrum_fit, mode='lines', name=f'Fit {f}', 
+                                                    line=dict(color='red', dash='dash')))
             self.fitted_spec_fig.add_vline(x=s, line=dict(color='black', width=2))
             self.fitted_spec_fig.update_layout(
-                title=f'Final Spectrum - Fit {f}',
+                title=f'Spectrum - Fit {f}',
                 xaxis_title='Spectrum Value', yaxis_title='Intensity',
                 yaxis=dict(range=[0, self.fits_max()]),
                 xaxis=dict(range=[0, self.dset.spec_len]),
                 width=400, height=400,
                 showlegend=False
             )
-
-            # Parameter images
-            for par in range(self.model.num_params):
+            
+            # Parameter histograms for fitted and true
+            for par in range(self.emb.model.num_params):
                 data_param = np.flipud(params[:, :, f, par].T)
                 self.param_fig_list[par].add_trace(go.Heatmap(
                     z=data_param, colorscale='Viridis', zmin=0, zmax=self.params_max(par, f),
@@ -744,16 +645,18 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
         if not hasattr(self, 'batch_img_fig') or len(self.batch_img_fig.data) == 0:
             self._init_batch_figures()
         
-        # Initialize fits figures
-        self._init_fits_figures()
+        # Initialize original image and spectrum figures if needed
+        if not hasattr(self, 'img_fig') or len(self.img_fig.data) == 0:
+            self._init_figures()
         
         # Create batch final image (fitted image with batch points)
         i = self.i_slider.value
         s = self.s_slider.value
         f = self.f_slider.value
         checked = list(self.batch_checkboxes.value) if hasattr(self, 'batch_checkboxes') else []
+        self.checkpoint_index = self.i_slider.value
         
-        fits = self.select_fits_params(which=0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
+        fits = self.select_fits_params(which=0, checkpoint_index=self.checkpoint_index).reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         data_fit = np.flipud(fits[..., f, s].T)
         pts = self.get_points_idx()
         
@@ -785,7 +688,7 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
         # Create batch final spectrum (fitted spectrum with batch fits)
         self.batch_fitted_spec_fig = go.FigureWidget()
         data = self.get_points_data(i)
-        fits_reshaped = fits.reshape(-1, self.model.num_fits, self.dset.shape[-1])
+        fits_reshaped = fits.reshape(-1, self.emb.model.num_fits, self.dset.shape[-1])
         clumps = self.split_list()
         for d, dat in enumerate(data):
             alpha = 1.0 if d in checked else 0.1
@@ -842,11 +745,12 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
         
         return widgets.VBox([sliders, main_row])
 
-    def _update_batch_fits_plots(self, change=None):
+    def _update_batch_fits_plots(self):
         i = self.i_slider.value
         s = self.s_slider.value
         f = self.f_slider.value
         checked = list(self.batch_checkboxes.value) if hasattr(self, 'batch_checkboxes') else []
+        self.checkpoint_index = self.i_slider.value
         
         # Update original batch image (from parent)
         datacube = self.select_datacube(i).reshape(self.dset.shape)
@@ -883,7 +787,7 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
                 self.batch_spec_fig.layout.shapes[0].x1 = s
         
         # Update final batch image
-        fits = self.select_fits_params(which=0).reshape(self.dset.shape[0], self.dset.shape[1], self.model.num_fits, -1)
+        fits = self.select_fits_params(which=0, checkpoint_index=self.checkpoint_index).reshape(self.dset.shape[0], self.dset.shape[1], self.emb.model.num_fits, -1)
         data_fit = np.flipud(fits[..., f, s].T)
         with self.batch_fitted_img_fig.batch_update():
             self.batch_fitted_img_fig.data[0].z = data_fit
@@ -900,7 +804,7 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz):
             self.batch_fitted_img_fig.layout.title.text = f'Final Image - Fit {f}'
         
         # Update final batch spectrum
-        fits_reshaped = fits.reshape(-1, self.model.num_fits, self.dset.shape[-1])
+        fits_reshaped = fits.reshape(-1, self.emb.model.num_fits, self.dset.shape[-1])
         clumps = self.split_list()
         with self.batch_fitted_spec_fig.batch_update():
             for d, dat in enumerate(data):

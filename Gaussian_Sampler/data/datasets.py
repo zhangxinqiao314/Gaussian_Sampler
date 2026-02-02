@@ -263,7 +263,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
 class Poisson_Sampled_PV_Embeddings():
     """Dataset class for accessing embeddings (fits and params) from h5 file."""
     
-    def __init__(self, model, dset, scaled=True):
+    def __init__(self, model, dset, checkpoint, scaled=True):
         """
         Args:
             model: Model object (Fitter_AE) that has embedding_h5_name attribute. must be initialized
@@ -271,119 +271,114 @@ class Poisson_Sampled_PV_Embeddings():
             scaled: If True, use scaled embeddings; if False, use unscaled
         """
         self.model = model
-        self.check = model.check
         self.dset = dset
-        self.scaled = scaled
-        self.embedding_h5_name = model.embedding_h5_name
-        self.num_fits = model.num_fits
-        self.num_params = model.num_params
+        # Set initial dataset name
+        self.checkpoint = checkpoint # setting is done with setter method
         
         # Determine which group to use
         self.group = 'scaled' if scaled else 'unscaled'
         
-        # Set initial dataset name
-        self._dset_name = dset.dset_name
         
     @property
-    def dset_name(self):
-        return self._dset_name
+    def checkpoint(self): return self._checkpoint
     
-    @dset_name.setter
-    def dset_name(self, name):
-        self._dset_name = name
-        self.dset.dset_name = name
+    @checkpoint.setter
+    def checkpoint(self, checkpoint_):
+        self._checkpoint = checkpoint_
+        self.model.load_weights(checkpoint_)
+        self.dset.dset_name = checkpoint_.split('/')[-2]
     
     def open_embedding_h5(self):
         """Open the embedding h5 file."""
-        return h5py.File(self.embedding_h5_name, 'r')
+        return h5py.File(self.model.embedding_h5_name, 'r')
     
-    def _check_embedding_tree_structure(self, dset_name):
+    def _check_embedding_tree_structure(self):
         """Check and create embedding tree structure if needed, efficiently."""
-        with h5py.File(self.embedding_h5_name, 'a') as f:
-            # Ensure checkpoint group exists (created only if missing)
-            chk_grp = f.require_group(self.check)
-            scaled_grp = chk_grp.require_group('scaled')
-            unscaled_grp = chk_grp.require_group('unscaled')
-
-            # Helper for datasets
+        with h5py.File(self.model.embedding_h5_name, 'a') as f:
+            # Ensure dataset group exists (created only if missing)
+            dset_grp = f.require_group(self.dset.dset_name)
+            scaled_grp = dset_grp.require_group('scaled')
+            unscaled_grp = dset_grp.require_group('unscaled')
+            
+            # Helper for datasets with checkpoint metadata
             def ensure_dataset(g, name, shape):
                 if name not in g:
-                    g.create_dataset(name, shape=shape, dtype=np.float32)
+                    ds = g.create_dataset(name, shape=shape, dtype=np.float32)
+                    # Store checkpoint name as metadata
+                    ds.attrs['checkpoint'] = self.model.check
+                else:
+                    # Update checkpoint metadata
+                    g[name].attrs['checkpoint'] = self.model.check
 
             # Ensure scaled datasets
-            ensure_dataset(scaled_grp, dset_name+'_fits', (len(self.dset), self.num_fits, self.dset.shape[-1]))
-            ensure_dataset(scaled_grp, dset_name+'_params', (len(self.dset), self.num_fits, self.num_params))
+            ensure_dataset(scaled_grp, 'fits', (len(self.dset), self.model.num_fits, self.dset.shape[-1]))
+            ensure_dataset(scaled_grp, 'params', (len(self.dset), self.model.num_fits, self.num_params))
             # Ensure unscaled datasets
-            ensure_dataset(unscaled_grp, dset_name+'_fits', (len(self.dset), self.num_fits, self.dset.shape[-1]))
-            ensure_dataset(unscaled_grp, dset_name+'_params', (len(self.dset), self.num_fits, self.num_params))
+            ensure_dataset(unscaled_grp, 'fits', (len(self.dset), self.model.num_fits, self.dset.shape[-1]))
+            ensure_dataset(unscaled_grp, 'params', (len(self.dset), self.model.num_fits, self.num_params))
 
             f.flush()
     
-    def _unscale_embedding(self, dset_name):
+    def _unscale_embedding(self):
         """Write unscaled dataset to h5 file."""
-        with h5py.File(self.embedding_h5_name, 'a') as f:
+        with h5py.File(self.model.embedding_h5_name, 'a') as f:
             # Read scaler from original dataset file
-            self.dset.scaler = self.dset._read_scaler_buf(dset_path=f'scaled/{dset_name}')
+            self.dset.scaler = self.dset._read_scaler_buf(dset_path=f'scaled/{self.dset.dset_name}')
             # Unscale fits
-            f[self.check]['unscaled'][dset_name+'_fits'][:] = self.dset.unscale_data(
-                f[self.check]['scaled'][dset_name+'_fits'][:]
+            f[self.dset.dset_name]['unscaled']['fits'][:] = self.dset.unscale_data(
+                f[self.dset.dset_name]['scaled']['fits'][:]
             )
             # Copy params (most don't need unscaling)
-            f[self.check]['unscaled'][dset_name+'_params'][:] = f[self.check]['scaled'][dset_name+'_params'][:]
+            f[self.dset.dset_name]['unscaled']['params'][:] = f[self.dset.dset_name]['scaled']['params'][:]
             # Unscale first parameter (Amplitude) only
-            f[self.check]['unscaled'][dset_name+'_params'][...,0] = self.dset.unscale_data(
-                f[self.check]['unscaled'][dset_name+'_params'][...,0], 
+            f[self.dset.dset_name]['unscaled']['params'][...,0] = self.dset.unscale_data(
+                f[self.dset.dset_name]['unscaled']['params'][...,0], 
                 recalculate_maxes=False
             )
                    
     def _write_scaled_embedding(self, batch_size=100):
         """Write scaled dataset to h5 file."""
-        with h5py.File(self.embedding_h5_name, 'a') as f:
+        with h5py.File(self.model.embedding_h5_name, 'a') as f:
             for i, (idx, x) in enumerate(tqdm(self.model.dataloader, leave=True, total=len(self.model.dataloader))):
                 with torch.no_grad():
                     fits, params = self.model.encoder(x.to(self.model.device))
-                    f[self.check]['scaled'][self.dset.dset_name+'_fits'][i*batch_size:(i+1)*batch_size] = fits.cpu().numpy()
-                    f[self.check]['scaled'][self.dset.dset_name+'_params'][i*batch_size:(i+1)*batch_size] = params.cpu().numpy()
+                    f[self.dset.dset_name]['scaled']['fits'][i*batch_size:(i+1)*batch_size] = fits.cpu().numpy()
+                    f[self.dset.dset_name]['scaled']['params'][i*batch_size:(i+1)*batch_size] = params.cpu().numpy()
 
             f.flush()
     
-    def write_embeddings(self, noise_level=0, batch_size=100):
+    def write_embeddings(self, batch_size=100):
         """Write embeddings to h5 file.
         
         Saved in folder with dataset scaling method (ie, '../../toy_dataset/l1_norm') 
         File structure:
             embedding_h5_File
-            |-- checkpoint_group
-            |   |-- attributes
-            |   |   |-- dset_parameters
-            |   |   |-- model_parameters
-            |   |   |-- sampler_parameters
+            |-- dset_name_group
             |   |-- scaled_group
-            |   |   |-- attributes
-            |   |   |   |-- scaler
-            |   |   |-- dset_name_fits (not summed over fits)
-            |   |   |-- dset_name_params
-            |   |-- unscaled
-            |   |   |-- dset_name_fits (not summed over fits)
-            |   |   |-- dset_name_params
+            |   |   |-- fits (not summed over fits, with checkpoint as attribute)
+            |   |   |-- params (with checkpoint as attribute)
+            |   |-- unscaled_group
+            |   |   |-- fits (not summed over fits, with checkpoint as attribute)
+            |   |   |-- params (with checkpoint as attribute)
+        
+        The checkpoint name is stored as metadata (attribute) on each dataset.
         Args:
-            noise_levels (iterable, int): List of noise levels to write embeddings for.
+            batch_size (int): Batch size for writing embeddings. Defaults to 100.
         """
         # write embeddings
         self.model.configure_dataloader_sampler(sampler=None)
         self.model.configure_dataloader(batch_size=batch_size)
-        self.dset.dset_index = noise_level
-        self._check_embedding_tree_structure(self.dset.dset_name)
+        self._check_embedding_tree_structure()
         
         self._write_scaled_embedding()
-        self._unscale_embedding(self.dset.dset_name)
+        self._unscale_embedding()
     
     def __len__(self):
         """Return the length of the dataset."""
         with self.open_embedding_h5() as f:
-            return len(f[self.check][self.group][self.dset_name+'_fits'])
+            return len(f[self.dset.dset_name][self.group]['fits'])
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, which='fits'):
         """Return fits and params for a given index.
         
         Args:
@@ -395,8 +390,8 @@ class Poisson_Sampled_PV_Embeddings():
                 - params: numpy array of shape (num_fits, num_params) or (len(idx), num_fits, num_params)
         """
         with self.open_embedding_h5() as f:
-            fits = f[self.check][self.group][self.dset_name+'_fits'][idx]
-            params = f[self.check][self.group][self.dset_name+'_params'][idx]
+            fits = f[self.dset.dset_name][self.group]['fits'][idx]
+            params = f[self.dset.dset_name][self.group]['params'][idx]
             return fits, params
 
 

@@ -423,7 +423,7 @@ class Fitter_AE:
             
         if return_losses: return loss_dict
         
-    def save_checkpoint(self,epoch,loss_dict,**kwargs): # TODO: needs to save sampler
+    def save_checkpoint(self,epoch,loss_dict,**kwargs): 
         """Save the checkpoint"""
         today = datetime.today()
         save_date=today.strftime('(%Y-%m-%d, %H:%M:%S)')
@@ -440,7 +440,7 @@ class Fitter_AE:
         }
         torch.save(checkpoint, self.checkpoint)
 
-    def load_weights(self, path_checkpoint):
+    def load_weights(self, path_checkpoint): # TODO: make a quickload feature so weights are not imported unless claculations will be done
         """loads the weights from a checkpoint
 
         Args:
