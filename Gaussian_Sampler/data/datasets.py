@@ -41,7 +41,7 @@ def draw_m_in_array(size_=100):
     return arr_
 
 
-class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): 
+class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset): # tODO: set seed for random number generation
     # TODO: try loading scaler/param classes if it exists, 
     # TODO: getitem unscaled dataset
     def __init__(self, scaled=False, 
@@ -206,7 +206,7 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
             except: pass
             
             
-            for i in tqdm(range(20)):
+            for i in tqdm(range(10)):
                 dset_name = self.dset_names[i]
                 sampled_data = f['unscaled'][dset_name][:]
                 self.fit_scaler(data=sampled_data)
@@ -251,10 +251,10 @@ class Poisson_Sampled_PV_Dataset(torch.utils.data.Dataset):
         fits = fits.sum(axis=1)
         fit = self.create_concentric_circles(fits).reshape(self.shape[0]*self.shape[1], -1)
         # make tile this in 100x100 square
-        for i in tqdm(range(20)):
-            sample_rate = 10**(-(i / 19) * 2)
+        for i in tqdm(range(10)):
+            sample_rate = 10**(-(i / 10))
             dset_name = f'{i:02d}_{sample_rate:06.3f}_sample_rate'
-            sampled_data = self.lower_signal(y=fit, sample_rate=sample_rate)
+            sampled_data = self.lower_signal(y=fit, sample_rate=sample_rate, background_noise=0.1)
             self._write_unscaled_dataset(dset_name, sampled_data, fit.shape)
         self.dset_names = self.h5_keys()
         self._write_scaled_dataset()
@@ -312,10 +312,10 @@ class Poisson_Sampled_PV_Embeddings():
 
             # Ensure scaled datasets
             ensure_dataset(scaled_grp, 'fits', (len(self.dset), self.model.num_fits, self.dset.shape[-1]))
-            ensure_dataset(scaled_grp, 'params', (len(self.dset), self.model.num_fits, self.num_params))
+            ensure_dataset(scaled_grp, 'params', (len(self.dset), self.model.num_fits, self.model.num_params))
             # Ensure unscaled datasets
             ensure_dataset(unscaled_grp, 'fits', (len(self.dset), self.model.num_fits, self.dset.shape[-1]))
-            ensure_dataset(unscaled_grp, 'params', (len(self.dset), self.model.num_fits, self.num_params))
+            ensure_dataset(unscaled_grp, 'params', (len(self.dset), self.model.num_fits, self.model.num_params))
 
             f.flush()
     

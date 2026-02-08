@@ -472,39 +472,47 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         true_params = self.select_dset_params()
         n_bins = 50
         for par in range(self.emb.model.num_params):
-            fitted_flat, true_flat = self._scale_amplitude_for_histogram(params, true_params, par)
-            # Use data range; for amplitude (par=0) clamp to [0, 1]
-            v_min = float(np.min(np.r_[fitted_flat, true_flat]))
-            v_max = float(np.max(np.r_[fitted_flat, true_flat]))
-            if v_max <= v_min:
-                v_max = v_min + 1.0
-            pad = (v_max - v_min) * 0.05 if v_max > v_min else 0.01
-            v_min -= pad
-            v_max += pad
-            if par == 0:  # Amplitude: clamp x-axis to [0, 1]
-                v_min = max(0.0, v_min)
-                v_max = min(1.0, v_max)
-                if v_max <= v_min:
-                    v_max = 1.0
-                    v_min = 0.0
-            bin_edges = np.linspace(v_min, v_max, n_bins + 1)
-            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            bin_width = (v_max - v_min) / n_bins
-            counts_fitted, _ = np.histogram(fitted_flat, bins=bin_edges)
-            # Vertical lines using add_vline (thinner than spectrum)
-            vline_shapes = [
-                dict(type='line', x0=float(v), x1=float(v), y0=0, y1=1, yref='paper',
-                     line=dict(color='black', width=1))
-                for v in true_flat
-            ]
+            data_param = np.flipud(params[:, :, :, par].T)
             with self.param_fig_list[par].batch_update():
-                self.param_fig_list[par].data[0].x = bin_centers
-                self.param_fig_list[par].data[0].y = counts_fitted
-                self.param_fig_list[par].data[0].width = bin_width
-            self.param_fig_list[par].update_layout(
-                xaxis=dict(range=[v_min, v_max]),
-                shapes=vline_shapes
-            )
+                self.param_fig_list[par].data[0].z = data_param
+                self.param_fig_list[par].data[0].zmax = self.params_max(par, f)
+                self.param_fig_list[par].data[1].x = [x]
+                self.param_fig_list[par].data[1].y = [y]
+            # fitted_flat, true_flat = self._scale_amplitude_for_histogram(params, true_params, par)
+            # # Use data range; for amplitude (par=0) clamp to [0, 1]
+            # v_min = float(np.min(np.r_[fitted_flat, true_flat]))
+            # v_max = float(np.max(np.r_[fitted_flat, true_flat]))
+            # if v_max <= v_min:
+            #     v_max = v_min + 1.0
+            # pad = (v_max - v_min) * 0.05 if v_max > v_min else 0.01
+            # v_min -= pad
+            # v_max += pad
+            # if par == 0:  # Amplitude: clamp x-axis to [0, 1]
+            #     v_min = max(0.0, v_min)
+            #     v_max = min(1.0, v_max)
+            #     if v_max <= v_min:
+            #         v_max = 1.0
+            #         v_min = 0.0
+            # bin_edges = np.linspace(v_min, v_max, n_bins + 1)
+            # bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            # bin_width = (v_max - v_min) / n_bins
+            # counts_fitted, _ = np.histogram(fitted_flat, bins=bin_edges)
+            # # Vertical lines using add_vline (thinner than spectrum)
+            # vline_shapes = [
+            #     dict(type='line', x0=float(v), x1=float(v), y0=0, y1=1, yref='paper',
+            #          line=dict(color='black', width=1))
+            #     for v in true_flat
+            # ]
+            # with self.param_fig_list[par].batch_update():
+            #     self.param_fig_list[par].data[0].x = bin_centers
+            #     self.param_fig_list[par].data[0].y = counts_fitted
+            #     self.param_fig_list[par].data[0].width = bin_width
+            # self.param_fig_list[par].update_layout(
+            #     xaxis=dict(range=[v_min, v_max]),
+            #     shapes=vline_shapes
+            # )
+
+
 
     def _update_fits_plots(self, change=None):
         """Update all fits plots by calling individual update functions."""
@@ -625,44 +633,66 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
             true_params = self.select_dset_params()
             n_bins = 50
             for par in range(self.emb.model.num_params):
-                fitted_flat, true_flat = self._scale_amplitude_for_histogram(params, true_params, par)
-                # Use data range; for amplitude (par=0) clamp to [0, 1]
-                v_min = float(np.min(np.r_[fitted_flat, true_flat]))
-                v_max = float(np.max(np.r_[fitted_flat, true_flat]))
-                if v_max <= v_min:
-                    v_max = v_min + 1.0
-                pad = (v_max - v_min) * 0.05 if v_max > v_min else 0.01
-                v_min -= pad
-                v_max += pad
-                if par == 0:  # Amplitude: clamp x-axis to [0, 1]
-                    v_min = max(0.0, v_min)
-                    v_max = min(1.0, v_max)
-                    if v_max <= v_min:
-                        v_max = 1.0
-                        v_min = 0.0
-                bin_edges = np.linspace(v_min, v_max, n_bins + 1)
-                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-                bin_width = (v_max - v_min) / n_bins
-                counts_fitted, _ = np.histogram(fitted_flat, bins=bin_edges)
-                self.param_fig_list[par].add_trace(go.Bar(
-                    x=bin_centers, y=counts_fitted, name='Fitted', opacity=0.5,
-                    marker_color='steelblue', width=bin_width
+            #########################################################
+            # Parameter images
+            #########################################################
+                data_param = np.flipud(params[:, :, f, par].T)
+                self.param_fig_list[par].add_trace(go.Heatmap(
+                    z=data_param, colorscale='Viridis', zmin=0, zmax=self.params_max(par, f),
+                    colorbar=dict(title='Value')
                 ))
-                # Vertical lines using add_vline (thinner than spectrum)
-                for v in true_flat:
-                    self.param_fig_list[par].add_vline(x=float(v), line=dict(color='black', width=1))
-                # Dummy trace for legend (vlines are layout shapes and don't appear in legend)
                 self.param_fig_list[par].add_trace(go.Scatter(
-                    x=[None], y=[None], mode='lines', name='True',
-                    line=dict(color='black', width=1)
+                    x=[x], y=[y], mode='markers',
+                    marker=dict(color='red', size=10),
                 ))
+                self.param_fig_list[par].data[0].on_click(self._handle_fits_click)
                 self.param_fig_list[par].update_layout(
                     title=f'{self.parameters_list[par]}',
-                    xaxis_title='Value', yaxis_title='Count',
-                    xaxis=dict(range=[v_min, v_max]),
-                    width=350, height=350,
-                    showlegend=True
+                    xaxis_title='X Position', yaxis_title='Y Position',
+                    width=350, height=350
                 )
+                
+            #########################################################
+            # Parameter histograms
+            #########################################################
+                # fitted_flat, true_flat = self._scale_amplitude_for_histogram(params, true_params, par)
+                # # Use data range; for amplitude (par=0) clamp to [0, 1]
+                # v_min = float(np.min(np.r_[fitted_flat, true_flat]))
+                # v_max = float(np.max(np.r_[fitted_flat, true_flat]))
+                # if v_max <= v_min:
+                #     v_max = v_min + 1.0
+                # pad = (v_max - v_min) * 0.05 if v_max > v_min else 0.01
+                # v_min -= pad
+                # v_max += pad
+                # if par == 0:  # Amplitude: clamp x-axis to [0, 1]
+                #     v_min = max(0.0, v_min)
+                #     v_max = min(1.0, v_max)
+                #     if v_max <= v_min:
+                #         v_max = 1.0
+                #         v_min = 0.0
+                # bin_edges = np.linspace(v_min, v_max, n_bins + 1)
+                # bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                # bin_width = (v_max - v_min) / n_bins
+                # counts_fitted, _ = np.histogram(fitted_flat, bins=bin_edges)
+                # self.param_fig_list[par].add_trace(go.Bar(
+                #     x=bin_centers, y=counts_fitted, name='Fitted', opacity=0.5,
+                #     marker_color='steelblue', width=bin_width
+                # ))
+                # # Vertical lines using add_vline (thinner than spectrum)
+                # for v in true_flat:
+                #     self.param_fig_list[par].add_vline(x=float(v), line=dict(color='black', width=1))
+                # # Dummy trace for legend (vlines are layout shapes and don't appear in legend)
+                # self.param_fig_list[par].add_trace(go.Scatter(
+                #     x=[None], y=[None], mode='lines', name='True',
+                #     line=dict(color='black', width=1)
+                # ))
+                # self.param_fig_list[par].update_layout(
+                #     title=f'{self.parameters_list[par]}',
+                #     xaxis_title='Value', yaxis_title='Count',
+                #     xaxis=dict(range=[v_min, v_max]),
+                #     width=350, height=350,
+                #     showlegend=True
+                # )
 
     def layout_fits_params(self):
         """Layout for viewing training results of a single point at a time."""
