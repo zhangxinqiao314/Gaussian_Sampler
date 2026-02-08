@@ -34,7 +34,7 @@ dset = Poisson_Sampled_PV_Dataset(shape=(100,100,750),
                        )
 
 ########################################################
-# Train models
+# Train models for gaussian sampler
 ########################################################
 from Gaussian_Sampler.models.pv_fitter import Fitter_AE, pseudovoigt_1D_fitters, pseudovoigt_1D_fitters_new
 from autophyslearn.spectroscopic.nn import block_factory, Conv_Block, FC_Block
@@ -43,67 +43,69 @@ from Gaussian_Sampler.data.custom_sampler import Gaussian_Sampler
 num_fits = 16 # number of curves to sum up
 num_params = 4 # number of parameters to fit
 
-# for std in [1,3,5]:
-#     for nn in [5,10,20]:
-#         if (std == 1) and (nn == 20 or nn == 10): # skip these combinations
-#             print(f'Skipping gaussian_std {std} and num_neighbors {nn}')
-#             continue
-#         print(f'Training model for gaussian_std {std} and num_neighbors {nn}')
-#         for i in range(10):
-#             config_ = {'sampling_type': 'gaussian',
-#                         'name': dset.dset_name,
-#                         'gaussian_std': std, 
-#                         'num_neighbors': nn, }
+for std in [1,3,5]:
+    for nn in [5,10,20]:
+        if (std == 1) and (nn == 20 or nn == 10): # skip these combinations
+            print(f'Skipping gaussian_std {std} and num_neighbors {nn}')
+            continue
+        print(f'Training model for gaussian_std {std} and num_neighbors {nn}')
+        for i in range(10):
+            config_ = {'sampling_type': 'gaussian',
+                        'name': dset.dset_name,
+                        'gaussian_std': std, 
+                        'num_neighbors': nn, }
             
-#             name = f'{i:02d}_{config_["sampling_type"]}_std:{config_["gaussian_std"]}_nn:{config_["num_neighbors"]}'
+            name = f'{i:02d}_{config_["sampling_type"]}_std:{config_["gaussian_std"]}_nn:{config_["num_neighbors"]}'
             
-#             dset.dset_index=i
-#             model = Fitter_AE(function=pseudovoigt_1D_fitters_new,
-#                             dset=dset,
-#                             num_params=num_params,
-#                             num_fits=num_fits,
-#                             checkpoints_label=name,
-#                             input_channels = 1,
-#                             learning_rate=5e-6,
-#                             device=device,
-#                             encoder = Multiscale1DFitter,
-#                             encoder_params = {
-#                                 "model_block_dict": { # factory wrapper for blocks
-#                                         "hidden_x1": block_factory(Conv_Block)(output_channels_list=[128,64,32], 
-#                                                                                 kernel_size_list=[3,3,3], 
-#                                                                                 pool_list=[128,64], 
-#                                                                                 max_pool=False),
-#                                         "hidden_xfc": block_factory(FC_Block)(output_size_list=[64,32]),
-#                                         "hidden_x2": block_factory(Conv_Block)(output_channels_list=[32,16,8], 
-#                                                                                 kernel_size_list=[3,3,3], 
-#                                                                                 pool_list=[64,32], 
-#                                                                                 max_pool=True),
-#                                         "hidden_embedding": block_factory(FC_Block)(output_size_list=[8*num_fits,num_params*num_fits], last=True),
-#                                     },
-#                                     # TEST: LIMITS,
-#                                     "skip_connections": {'hidden_xfc': 'hidden_embedding'},
-#                                     "function_kwargs": {'limits': [1,dset.shape[-1],dset.shape[-1]] }
-#                                 },
-#                                 sampler = Gaussian_Sampler,
-#                                 sampler_params = {'dset': dset, 
-#                                                 'batch_size': 100, 
-#                                                 'gaussian_std': std, 
-#                                                 'orig_shape': dset.shape[0:-1], 
-#                                                 'num_neighbors': nn },
-#                             )
-            
+            dset.dset_index=i
+            model = Fitter_AE(function=pseudovoigt_1D_fitters_new,
+                            dset=dset,
+                            num_params=num_params,
+                            num_fits=num_fits,
+                            checkpoints_label=name,
+                            input_channels = 1,
+                            learning_rate=5e-6,
+                            device=device,
+                            encoder = Multiscale1DFitter,
+                            encoder_params = {
+                                "model_block_dict": { # factory wrapper for blocks
+                                        "hidden_x1": block_factory(Conv_Block)(output_channels_list=[128,64,32], 
+                                                                                kernel_size_list=[3,3,3], 
+                                                                                pool_list=[128,64], 
+                                                                                max_pool=False),
+                                        "hidden_xfc": block_factory(FC_Block)(output_size_list=[64,32]),
+                                        "hidden_x2": block_factory(Conv_Block)(output_channels_list=[32,16,8], 
+                                                                                kernel_size_list=[3,3,3], 
+                                                                                pool_list=[64,32], 
+                                                                                max_pool=True),
+                                        "hidden_embedding": block_factory(FC_Block)(output_size_list=[8*num_fits,num_params*num_fits], last=True),
+                                    },
+                                    # TEST: LIMITS,
+                                    "skip_connections": {'hidden_xfc': 'hidden_embedding'},
+                                    "function_kwargs": {'limits': [1,dset.shape[-1],dset.shape[-1]] }
+                                },
+                                sampler = Gaussian_Sampler,
+                                sampler_params = {'dset': dset, 
+                                                'batch_size': 100, 
+                                                'gaussian_std': std, 
+                                                'orig_shape': dset.shape[0:-1], 
+                                                'num_neighbors': nn },
+                            )
 
-#             print(f'Training model for noise level {i}')
-#             wandb.init( name=name, config=config_) # later change config for regularization
-#             model.train(epochs=51,save_every=50, log_wandb=True)
-#             wandb.finish()
+            print(f'Training model for noise level {i}')
+            wandb.init(project='poisson_pv_sampled_training', 
+                    group='sampling:10^(-(i/10)_bkg_noise:0.1',
+                    name=f'{i:02d}_{config_["sampling_type"]}_std:{config_["gaussian_std"]}_nn:{config_["num_neighbors"]}', 
+                        config=config_) # later change config for regularization
+            model.train(epochs=51,save_every=50, log_wandb=True)
+            wandb.finish()
 
-std, nn = 'none', 'none'
+########################################################
+# Train models for random sampler
+########################################################
 for i in range(10):
     config_ = {'sampling_type': 'random',
-                'name': dset.dset_name,
-                'gaussian_std': std, 
-                'num_neighbors': nn, }
+                'name': dset.dset_name}
     
     
     dset.dset_index=i
