@@ -472,7 +472,7 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         true_params = self.select_dset_params()
         n_bins = 50
         for par in range(self.emb.model.num_params):
-            data_param = np.flipud(params[:, :, :, par].T)
+            data_param = np.flipud(params[:, :, f, par].T)
             with self.param_fig_list[par].batch_update():
                 self.param_fig_list[par].data[0].z = data_param
                 self.param_fig_list[par].data[0].zmax = self.params_max(par, f)
@@ -644,6 +644,7 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
                 self.param_fig_list[par].add_trace(go.Scatter(
                     x=[x], y=[y], mode='markers',
                     marker=dict(color='red', size=10),
+                    showlegend=False
                 ))
                 self.param_fig_list[par].data[0].on_click(self._handle_fits_click)
                 self.param_fig_list[par].update_layout(
@@ -702,7 +703,8 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         self.spec_fig.update_layout(showlegend=True)
         self.summed_spec_fig.update_layout(showlegend=True)
         self.individual_spec_fig.update_layout(showlegend=True)
-
+        for param_fig in self.param_fig_list:
+            param_fig.update_layout(showlegend=True)
         # Connect widgets to update function
         for slider in [self.i_slider, self.s_slider, self.f_slider]:
             slider.observe(self._update_fits_plots, names='value')
@@ -736,6 +738,19 @@ class Poisson_Sampled_PV_viz_embeddings(Poisson_Sampled_PV_viz): #TODO: why does
         self.summed_spec_fig.data[1].on_click(handle_spec_click)
         self.individual_spec_fig.data[0].on_click(handle_spec_click)
         self.individual_spec_fig.data[1].on_click(handle_spec_click)
+        
+        def handle_params_click(trace, points, selector):
+            if points.xs and points.ys:
+                x_clicked = points.xs[0]
+                y_clicked = points.ys[0]
+                self.x = int(round(x_clicked))
+                self.y = int(round(y_clicked))
+                self.x = max(0, min(self.x, self.dset.shape[0] - 1))
+                self.y = max(0, min(self.y, self.dset.shape[1] - 1))
+                self._update_fits_plots()
+
+        for param_fig in self.param_fig_list:
+            param_fig.data[0].on_click(handle_params_click)
 
         sliders = widgets.VBox([
             widgets.HBox([self.i_slider, self.s_slider, self.f_slider]),

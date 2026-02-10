@@ -24,7 +24,7 @@ import wandb
 import numpy as np
 import h5py
 
-#TODO: make classes out of functions. 
+# TODO: set seed for random number generation (np and torch)
 class pseudovoigt_1D_fitters():
     def __init__(self, limits=[1,1,975]):
         self.limits = limits
@@ -314,8 +314,8 @@ class Fitter_AE:
         self.best_train_loss = float('inf')
         self.checkpoint = None
         self.scheduler = None
-        self._checkpoint_folder = os.path.split(dset.h5_name)[0] + '/' + checkpoints_label + f'/checkpoints/{dset.dset_name}'
-        self.embedding_h5_name = os.path.split(dset.h5_name)[0] + '/' + checkpoints_label + '/embeddings.h5'
+        self._checkpoint_folder = os.path.split(dset.h5_name)[0] + '/' + self.checkpoints_label + f'/checkpoints/{dset.dset_name}'
+        self.embedding_h5_name = os.path.split(dset.h5_name)[0] + '/' + self.checkpoints_label + f'/{dset.dset_name}/embeddings.h5'
         
     @property
     def dataloader_sampler(self): return self._dataloader_sampler   
@@ -374,11 +374,13 @@ class Fitter_AE:
             self._checkpoint_file = checkpoint_file
             self._check = checkpoint_file.split('.pkl')[0]
             self._checkpoint_folder = checkpoint_folder
+            self.embedding_h5_name = '/'.join(self._checkpoint_folder.split('/')[:-2]) + '/embeddings.h5'
         except:
             self._check = None
             self._checkpoint_folder = None
             self._checkpoint_file = None
-             
+            self.embedding_h5_name = None
+            
     def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False, primary_loss_function=F.mse_loss):
         """Train the model.
 
