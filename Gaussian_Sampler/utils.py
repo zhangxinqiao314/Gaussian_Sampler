@@ -11,3 +11,15 @@ def profile(func):
         return result
     return wrapper
 
+def tensor_to_numpy(tensor):
+    return tensor.detach().cpu().numpy()
+
+def display_dict_tree(data, indent=0):
+    """Display the tree structure of the pickle file with indentation for nested items."""
+    tab = "--" * indent
+    for key, value in data.items():
+        if isinstance(value, dict):
+            print(f"{tab}{key}:")
+            display_dict_tree(value, indent=indent+1)
+        else:
+            print(f"{tab}{key}")

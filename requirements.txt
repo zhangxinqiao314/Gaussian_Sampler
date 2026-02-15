@@ -18,6 +18,7 @@ wandb
 git+https://github.com/m3-learning/datafed-torchflow.git # datafed-torchflow
 pydantic
 numba
+bottleneck
 #to clone
 #git+https://github.com/m3-learning/M3Learning-Util.git # M3Learning-Util
 #git+https://github.com/m3-learning/AutoPhysLearn.git@generalize-model # AutoPhysLearn

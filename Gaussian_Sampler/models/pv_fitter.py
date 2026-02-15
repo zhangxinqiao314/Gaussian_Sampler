@@ -1,17 +1,13 @@
 import sys
 import os
 
-# remove eventually
-sys.path.append('/home/m3learning/Northwestern/M3Learning-Util/src')
-sys.path.append('/home/m3learning/Northwestern/AutoPhysLearn/src')
-
 from random import shuffle
 from m3util.util.IO import make_folder
 from m3util.ml.regularization import Weighted_LN_loss, ContrastiveLoss, DivergenceLoss, Sparse_Max_Loss
 
 from autophyslearn.spectroscopic.nn import Multiscale1DFitter, Conv_Block, FC_Block, block_factory
 
-from ..data.custom_sampler import Gaussian_Sampler
+from data.custom_sampler import Gaussian_Sampler
 
 import torch
 from torch import nn, optim
