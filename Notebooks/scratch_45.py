@@ -10,6 +10,9 @@ from tqdm import tqdm
 #
 
 dir = 'C://Users//shams//Drexel University//Chang Lab - General//Individual//Sam Amsterdam//acoustic scan data//tomography_testing//example_data//'
+
+# dirctionary with water by varying frequency
+
 #
 ## keys of the data dict
 # fileName
@@ -122,7 +125,7 @@ tstModel = [(1.5, 1, 2500), (2.7, 1, 1000), (1.5, 1, 2500)]
 # tstCoeffs = tm.calculateReflectionAndTransmissionCoeffs(tstModel, 2)
 # print(tm.propagateWaveThroughLayer(tstWave, tstLayer, 0.5, -0.2))
 # print(tm.propagateWavesThroughLayers(tstWave, tstModel, tstCoeffs, -1, 0.01, 10))
-# TODO: walk through the functions in tomography.py to understand 1) how the signal is generated, 2) which parameters we are trying to fit )optimize) for
+# TODO: walk through the functions in tomography.py to understand 1) how the signal is generated, 2) which parameters we are trying to optimize for
 signals = tm.generateSignalFromModel(ref, refX, tstModel, 'echo', 'reverse',
                                      3, 0.01, 20000, -1, False)
 transSignals = tm.generateSignalFromModel(ref, refX, tstModel, 'transmission', 'reverse',

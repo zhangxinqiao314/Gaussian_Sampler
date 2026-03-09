@@ -23,3 +23,4 @@ def display_dict_tree(data, indent=0):
             display_dict_tree(value, indent=indent+1)
         else:
             print(f"{tab}{key}")
+            

@@ -20,124 +20,17 @@ import wandb
 import numpy as np
 import h5py
 
-# TODO: set seed for random number generation (np and torch)
-class pseudovoigt_1D_fitters():
-    def __init__(self, limits=[1,1,975]):
-        self.limits = limits
-    
-    def scale_parameters(self, embedding):
-        A = self.limits[0] * embedding[..., 0] # area under curve TODO: best way to scale this?
-        # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
-        x = self.limits[1] * embedding[..., 1] # mean
-        w = self.limits[2] * embedding[..., 2] # fwhm
-        nu = embedding[..., 3] # fraction voight character
-        return torch.stack([A,x,w,nu],axis=2)
-
-    def apply_activations(self, embedding):
-        '''This function takes an embedding and scales it to the limits of the parameters
-        
-        This function implements the Pseudo-Voigt profile as described in:
-        https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
-        
-        Args:
-            embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
-                - A: Area under curve (index 0)
-                - x: Mean position (index 1)
-                - w: Full Width at Half Maximum (FWHM) (index 2)
-                - nu: Lorentzian character fraction (index 3)
-            limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
-        '''
-        A = nn.ReLU()(embedding[..., 0]) # area under curve 
-        # Ib = limits[1] * nn.ReLU()(embedding[..., 1])
-        x = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-3) # mean
-        w = torch.clamp(nn.Tanh()(embedding[..., 2])/2 + 0.5, min=1e-3) # fwhm
-        nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
-        return torch.stack([A,x,w,nu],axis=2)
-
-    def _gaussian_component(self, A, x, x_, w):
-        """Calculate the Gaussian component of the Pseudo-Voigt profile
-        
-        Args:
-            A (torch.Tensor): Area under curve
-            x (torch.Tensor): Mean positions
-            x_ (torch.Tensor): X-axis points
-            w (torch.Tensor): Full Width at Half Maximum (FWHM)
-        """
-        gaussian_factor = (4 * torch.log(torch.tensor(2)) / torch.pi) ** 0.5
-        gaussian = (A * gaussian_factor / w * 
-                torch.exp(-4 * torch.log(torch.tensor(2)) / w**2 * 
-                            (x_ - x)**2))
-        return gaussian
-
-    def _lorentzian_component(self, A, x, x_, w):
-        """Calculate the Lorentzian component of the Pseudo-Voigt profile
-        
-        Args:
-            A (torch.Tensor): Area under curve
-            x (torch.Tensor): Mean positions
-            x_ (torch.Tensor): X-axis points
-            w (torch.Tensor): Full Width at Half Maximum (FWHM)
-        """
-        lorentzian = (A * (2/torch.pi * w) / (4 * (x_ - x)**2 + w**2))
-        return lorentzian
-
-    def generate_fit(self, embedding, dset, spec_len=None):
-        """Generate 1D Pseudo-Voigt profiles from embedding parameters.
-
-        This function implements the Pseudo-Voigt profile as described in:
-        https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
-
-        The Pseudo-Voigt profile is a linear combination of Gaussian and Lorentzian profiles,
-        controlled by the mixing parameter nu.
-
-        Args:
-            embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
-                - A: Area under curve (index 0)
-                - x: Mean position (index 1)
-                - w: Full Width at Half Maximum (FWHM) (index 2)
-                - nu: Lorentzian character fraction (index 3)
-            dset: Dataset containing spectral information with attribute spec_len
-            return_params (bool): If True, returns both profile and parameters. Defaults to False
-
-        Returns:
-            torch.Tensor: Pseudo-Voigt profiles of shape (batch_size, num_fits, spec_len)
-            torch.Tensor: (Optional) Parameters [A, x, w, nu] if return_params=True
-        """
-        device = embedding.device
-        # Unpack embedding tensor along last dimension (shape: [..., 4])
-        A = embedding[..., 0].unsqueeze(-1)  # Area
-        x = embedding[..., 1].unsqueeze(-1)  # Mean position
-        w = embedding[..., 2].unsqueeze(-1)  # FWHM
-        nu = embedding[..., 3].unsqueeze(-1) # Lorentzian character fraction
-        
-        s = x.shape  # (_, num_fits)    
-        if spec_len is not None:
-            s = (s[0],-1,spec_len)
-        
-        x_ = torch.arange(dset.spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
-        
-        # Calculate components
-        gaussian = self._gaussian_component(A, x, x_, w)
-        lorentzian = self._lorentzian_component(A, x, x_, w)
-        
-        # Pseudo-Voigt profile
-        pseudovoigt = nu * lorentzian + (1 - nu) * gaussian
-
-        return pseudovoigt.to(torch.float32)
-
-
-class pseudovoigt_1D_fitters_new():
-    '''https://www.surfacesciencewestern.com/wp-content/uploads/ass18_biesinger.pdf'''
-    
+class morlet_1D_fitters_real():
     def __init__(self, limits=[1,1,975]):
         self.limits = limits
     
     def scale_parameters(self, embedding):
         a = self.limits[0] * embedding[..., 0] # amplitude
-        E = self.limits[1] * embedding[..., 1] # mean
-        F = self.limits[2] * embedding[..., 2] # fwhm
-        nu = embedding[..., 3] # fraction voight character
-        return torch.stack([a,E,F,nu],axis=2)
+        mu = self.limits[1] * embedding[..., 1] # mean
+        sigma = self.limits[2] * embedding[..., 2] # standard deviation
+        omega = self.limits[3] * embedding[..., 3] # angular frequency
+        
+        return torch.stack([a,mu,sigma,omega],axis=2)
 
     def apply_activations(self, embedding):
         '''This function takes an embedding and scales it to the limits of the parameters
@@ -153,80 +46,48 @@ class pseudovoigt_1D_fitters_new():
                 - nu: Lorentzian character fraction (index 3)
             limits (list): Scale factors for [A, x, w]. Defaults to [1, 1, 975]
         '''
-        h = nn.ReLU()(embedding[..., 0]) # amplitude
-        E = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-3) # mean
-        F = torch.clamp(nn.Tanh()(embedding[..., 2])/2 + 0.5, min=1e-3) # fwhm
-        nu = 0.5 * nn.Tanh()(embedding[..., 3]) + 0.5 # fraction voight character
-        return torch.stack([h,E,F,nu],axis=2)
-
-    def _gaussian_component(self, h, E, x_, F):
-        """Calculate the Gaussian component of the Pseudo-Voigt profile
+        a = nn.Tanh()(embedding[..., 0])/2 + 0.5 # amplitude
+        mu = torch.clamp(nn.Tanh()(embedding[..., 1])/2 + 0.5, min=1e-10) # mean
+        sigma = torch.clamp(nn.Tanh()(embedding[..., 2])/2 + 0.5, min=1e-10) # stdv
+        omega = torch.clamp(nn.Tanh()(embedding[..., 3])/2 + 0.5, min=1e-10) # angular frequency
         
-        Args:
-            h (torch.Tensor): amplitude
-            E (torch.Tensor): mean
-            x_ (torch.Tensor): X-axis points
-            sigma (torch.Tensor): standard deviation
-        """
-        gaussian = h * torch.exp( -4 * torch.log(torch.tensor(2)) \
-                                     * ((x_-E)/F)**2 )
-        return gaussian
-
-    def _lorentzian_component(self, h, E, x_, F):
-        """Calculate the Lorentzian component of the Pseudo-Voigt profile
-        
-        Args:
-            h (torch.Tensor): amplitude
-            E (torch.Tensor): mean
-            x_ (torch.Tensor): X-axis points
-            F (torch.Tensor): Full Width at Half Maximum (FWHM)
-        """
-        lorentzian = h /(1  + 4*((x_-E)/F)**2)
-        return lorentzian
-
+        return torch.stack([a,mu,sigma,omega],axis=2)
+    
     def generate_fit(self, embedding, spec_len, **kwargs, ):
-        """Generate 1D Pseudo-Voigt profiles from embedding parameters.
+        '''Generate 1D Morlet profiles from embedding parameters.
+        # H2O: 1.5 MRayl (specific acoustic impedance), 1500 m/s -> TT= 13,333 ns
+        impedance, loss coefficient, and travel time of the layer
+        mode (str) : 'echo', 'transmission', 'both' - the acoustic signal type to generate
 
-        This function implements the Pseudo-Voigt profile as described in:
-        https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9330705/
-
-        The Pseudo-Voigt profile is a linear combination of Gaussian and Lorentzian profiles,
-        controlled by the mixing parameter nu.
+        not compatible with cwt: pi**-0.25 * (exp(1j*w*(x - mu)) - exp(-0.5*(w**2))) * exp(-0.5*(x - mu)**2)
+        compatible with cwt: exp(1j*w*x/s) * exp(-0.5*(x/s)**2) * pi**(-0.25) * sqrt(1/s)
 
         Args:
-            embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 4) containing:
-                - A: Area under curve (index 0)
-                - x: Mean position (index 1)
-                - w: Full Width at Half Maximum (FWHM) (index 2)
-                - nu: Lorentzian character fraction (index 3)
-            dset: Dataset containing spectral information with attribute spec_len
-            return_params (bool): If True, returns both profile and parameters. Defaults to False
-
-        Returns:
-            torch.Tensor: Pseudo-Voigt profiles of shape (batch_size, num_fits, spec_len)
-            torch.Tensor: (Optional) Parameters [A, x, w, nu] if return_params=True
-        """
+            embedding (torch.Tensor): Tensor of shape (batch_size, num_fits, 3) containing:
+                - a: Amplitude (index 0)
+                - mu: Center frequency (index 1)
+                - sigma: Standard deviation (index 2)
+            spec_len (int): Length of the spectrum
+        '''
         device = embedding.device
-        # Unpack embedding tensor along last dimension (shape: [..., 4])
+        # Unpack embedding tensor along last dimension (shape: [..., 3])
         a = embedding[..., 0].unsqueeze(-1)  # amplitude
-        E = embedding[..., 1].unsqueeze(-1)  # mean
-        F = embedding[..., 2].unsqueeze(-1)  # FWHM
-        nu = embedding[..., 3].unsqueeze(-1) # Lorentzian character fraction
+        mu = embedding[..., 1].unsqueeze(-1)  # center frequency
+        sigma = embedding[..., 2].unsqueeze(-1)  # standard deviation
+        omega = embedding[..., 3].unsqueeze(-1)  # angular frequency
         
         s = a.shape  # (_, num_fits)
         
-        x_ = torch.arange(spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
+        t = torch.arange(spec_len, dtype=torch.float32).repeat(s[0],s[1],1).to(device)
         
-        # Calculate components
-        gaussian = self._gaussian_component(a, E, x_, F)
-        lorentzian = self._lorentzian_component(a, E, x_, F)
+        # Calculate Morlet profile
+        morlet = a * torch.exp(-0.5 * ((t - mu) / sigma)**2) * torch.cos(2 * np.pi * omega * (t-mu))
         
-        # Pseudo-Voigt profile
-        pseudovoigt = nu * lorentzian + (1 - nu) * gaussian
+        return morlet.to(torch.float32)
 
-        return pseudovoigt.to(torch.float32)
+    
 
-
+    
 class Fitter_AE:
     """Autoencoder-based fitter for spectroscopic data.
 
@@ -310,8 +171,8 @@ class Fitter_AE:
         self.best_train_loss = float('inf')
         self.checkpoint = None
         self.scheduler = None
-        self._checkpoint_folder = os.path.split(dset.h5_name)[0] + '/' + self.checkpoints_label + f'/checkpoints/{dset.dset_name}'
-        self.embedding_h5_name = os.path.split(dset.h5_name)[0] + '/' + self.checkpoints_label + f'/{dset.dset_name}/embeddings.h5'
+        self._checkpoint_folder = os.path.split(dset.dataset_path)[0] + '/' + checkpoints_label + f'/checkpoints/{dset.dset_name}' # TODO: change to dset.dataset_path
+        self.embedding_h5_name = os.path.split(dset.dataset_path)[0] + '/' + checkpoints_label + f'/{dset.dset_name}/embeddings.h5'
         
     @property
     def dataloader_sampler(self): return self._dataloader_sampler   
@@ -377,7 +238,7 @@ class Fitter_AE:
             self._checkpoint_file = None
             self.embedding_h5_name = None
             
-    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False, primary_loss_function=F.mse_loss):
+    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False, primary_loss_function=F.mse_loss, lr_scheduler=None):
         """Train the model.
 
         Args:
@@ -399,7 +260,6 @@ class Fitter_AE:
         
         # training loop
         for epoch in range(self.start_epoch, epochs):
-            fill_embeddings = False # TODO: fill embeddings during training
 
             loss_dict = self.loss_function( self.dataloader,
                                            primary_loss_function=primary_loss_function,
@@ -418,7 +278,7 @@ class Fitter_AE:
           # TODO: add embedding saver
           # TODO: add lr scheduler
             if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,)
-            
+            if lr_scheduler: lr_scheduler.step()
         if return_losses: return loss_dict
         
     def save_checkpoint(self,epoch,loss_dict,**kwargs): 
@@ -513,7 +373,7 @@ class Fitter_AE:
         """Compute all loss components"""
         loss_dict = {
             'weighted_ln_loss': 0, 'primary_loss': 0, 'mae_loss': 0, 'train_loss': 0,
-            'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0
+            'sparse_max_loss': 0, 'l2_batchwise_loss': 0,
         }
         
         # Compute individual losses
@@ -573,7 +433,7 @@ class Fitter_AE:
         self.encoder.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4, primary_loss=primary_loss_function)
         accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
-                               'sparse_max_loss': 0, 'l2_batchwise_loss': 0, 'zero_loss': 0}
+                               'sparse_max_loss': 0, 'l2_batchwise_loss': 0}
 
         for i, (idx, x) in enumerate(tqdm(train_iterator, leave=True, total=len(train_iterator))):
             idx = idx.to(self.device).squeeze()
@@ -587,16 +447,12 @@ class Fitter_AE:
             else:
                 predicted_x, embedding, sd, mn = self.encoder(x, beta)
             
-            zero_loss = loss_components['primary'](torch.tensor(self.dset.getitem_zero_dset(idx.detach().cpu().numpy())[1]).to(self.device), 
-                                                    predicted_x[:,0])
-            
             # Process binning if needed
             if binning:
                 x, predicted_x = self._process_batch_binning(x, predicted_x, idx, weight_by_distance)
             
             # Compute losses
             loss, batch_loss_dict = self._compute_losses(embedding, x, predicted_x.sum(axis=1), loss_components, coef5)
-            batch_loss_dict['zero_loss'] = zero_loss.item()
 
             # Update accumulated losses
             for k in accumulated_loss_dict:
