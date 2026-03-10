@@ -14,6 +14,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from datetime import datetime
 from tqdm import tqdm
 import wandb
@@ -84,8 +85,6 @@ class morlet_1D_fitters_real():
         morlet = a * torch.exp(-0.5 * ((t - mu) / sigma)**2) * torch.cos(2 * np.pi * omega * (t-mu))
         
         return morlet.to(torch.float32)
-
-    
 
     
 class Fitter_AE:
@@ -160,6 +159,7 @@ class Fitter_AE:
                                 **encoder_params
                                 ).to(self.device).type(torch.float32)
         self.optimizer = optim.Adam( self.encoder.parameters(), lr=self.learning_rate )
+        self.lr_scheduler = CosineAnnealingLR(optimizer=self.optimizer, T_max=100, eta_min=self.learning_rate/100)
         self.sampler = sampler
         self.sampler_params = sampler_params
         try: self.sampler_params.pop('dset')
@@ -238,9 +238,20 @@ class Fitter_AE:
             self._checkpoint_file = None
             self.embedding_h5_name = None
             
-    def train(self, seed=42, epochs=100, weight_by_distance=False, save_every=1, batch_size=100, return_losses=False, log_wandb=False, primary_loss_function=F.mse_loss, lr_scheduler=None):
+    def train(self, seed=42, epochs=100, weight_by_distance=False, 
+              save_every=1, batch_size=100, return_losses=False, 
+              log_wandb=False, primary_loss_function=F.mse_loss, 
+              lr_scheduling=True):
         """Train the model.
-
+        
+        Args:
+            seed (int, optional): Random seed for reproducibility. Defaults to 42
+            epochs (int): Number of training epochs. Defaults to 100
+            weight_by_distance (bool): Whether to weight samples by distance. Defaults to True
+            save_every (int, optional): Save checkpoint every n epochs. Defaults to 1
+            batch_size (int, optional): Batch size for training. Defaults to 100
+            return_losses (bool, optional): Whether to return losses. Defaults to False
+            log_wandb (bool, optional): Whether to log to wandb. Defaults to False
         Args:
             seed (int, optional): Random seed for reproducibility. Defaults to 42
             epochs (int): Number of training epochs. Defaults to 100
@@ -258,6 +269,8 @@ class Fitter_AE:
         else:
             self.configure_dataloader(shuffle=True, batch_size=batch_size)
         
+        if lr_scheduling: self.lr_scheduler.max_steps = epochs
+
         # training loop
         for epoch in range(self.start_epoch, epochs):
 
@@ -276,9 +289,8 @@ class Fitter_AE:
           #  schedular.step()
           # TODO: add regularization losses
           # TODO: add embedding saver
-          # TODO: add lr scheduler
             if epoch % save_every == 0: self.save_checkpoint(epoch, loss_dict=loss_dict,)
-            if lr_scheduler: lr_scheduler.step()
+            if lr_scheduling: self.lr_scheduler.step()
         if return_losses: return loss_dict
         
     def save_checkpoint(self,epoch,loss_dict,**kwargs): 
