@@ -3,7 +3,7 @@ import os
 
 from random import shuffle
 from m3util.util.IO import make_folder
-from m3util.ml.regularization import Weighted_LN_loss, ContrastiveLoss, DivergenceLoss, Sparse_Max_Loss
+from m3util.ml.regularization import LN_loss, ContrastiveLoss, DivergenceLoss, Sparse_Max_Loss
 
 from autophyslearn.spectroscopic.nn import Multiscale1DFitter, Conv_Block, FC_Block, block_factory
 
@@ -241,7 +241,7 @@ class Fitter_AE:
     def train(self, seed=42, epochs=100, weight_by_distance=False, 
               save_every=1, batch_size=100, return_losses=False, 
               log_wandb=False, primary_loss_function=F.mse_loss, 
-              lr_scheduling=True):
+              lr_scheduling=True, **kwargs):
         """Train the model.
         
         Args:
@@ -277,7 +277,7 @@ class Fitter_AE:
             loss_dict = self.loss_function( self.dataloader,
                                            primary_loss_function=primary_loss_function,
                                             binning=self.binning,
-                                            weight_by_distance=weight_by_distance, )
+                                            weight_by_distance=weight_by_distance, **kwargs)
             
             # divide by batches inplace
             loss_dict.update( (k,v/len(self.dataloader)) for k,v in loss_dict.items())
@@ -345,7 +345,7 @@ class Fitter_AE:
         """
         components = {
             'primary': (primary_loss),
-            'weighted_ln': (Weighted_LN_loss(coef=coef1, channels=self.num_fits).to(self.device) if coef1 > 0 else None),
+            'weighted_ln': (LN_loss(coef=coef1,).to(self.device) if coef1 > 0 else None),
             'contrastive': (ContrastiveLoss(coef2).to(self.device) if coef2 > 0 else None),
             'divergence': (DivergenceLoss(train_iterator.batch_size, coef3).to(self.device) if coef3 > 0 else None),
             'sparse_max': (Sparse_Max_Loss(min_threshold=self.learning_rate, channels=self.num_fits, coef=coef4).to(self.device) if coef4 > 0 else None)
@@ -384,7 +384,7 @@ class Fitter_AE:
     def _compute_losses(self, embedding, x, predicted_x, loss_components, coef5):
         """Compute all loss components"""
         loss_dict = {
-            'weighted_ln_loss': 0, 'primary_loss': 0, 'mae_loss': 0, 'train_loss': 0,
+            'reg_loss_1': 0, 'primary_loss': 0, 'mae_loss': 0, 'train_loss': 0,
             'sparse_max_loss': 0, 'l2_batchwise_loss': 0,
         }
         
@@ -444,7 +444,7 @@ class Fitter_AE:
         """
         self.encoder.train()
         loss_components = self._initialize_loss_components(train_iterator, coef1, coef2, coef3, coef4, primary_loss=primary_loss_function)
-        accumulated_loss_dict = {'weighted_ln_loss': 0, 'mse_loss': 0, 'train_loss': 0,
+        accumulated_loss_dict = {'reg_loss_1': 0, 'mse_loss': 0, 'train_loss': 0,
                                'sparse_max_loss': 0, 'l2_batchwise_loss': 0}
 
         for i, (idx, x) in enumerate(tqdm(train_iterator, leave=True, total=len(train_iterator))):
