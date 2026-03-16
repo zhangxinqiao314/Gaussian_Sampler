@@ -56,7 +56,6 @@ def plotly_viewer(dataset):
     idx, processed_data = dataset[i_slider.value]
     # processed_data shape: (len(numeric_keys), len(crops), crop_length)
     # idx is the actual key value, need to find its position in numeric_keys
-    scan_idx_in_array = dataset.numeric_keys.index(idx)
     
     # Create subplots - one per crop, stacked vertically
     fig = make_subplots(
@@ -77,7 +76,7 @@ def plotly_viewer(dataset):
     # Add traces for each crop
     for c, crop in enumerate(dataset.crops):
         # Extract signal for this crop: processed_data[scan_idx_in_array, c, :]
-        crop_signal = processed_data[scan_idx_in_array, c, :]
+        crop_signal = processed_data[c, :]
         
         # Extract time for this crop
         crop_time = full_time[crop[0]:crop[1]]

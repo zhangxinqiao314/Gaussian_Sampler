@@ -8,6 +8,7 @@
 # cpython files
 */__pycache__/*
 *.pyc
+.env
 
 # large files
 *.h5
